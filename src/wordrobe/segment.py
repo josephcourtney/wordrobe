@@ -28,14 +28,18 @@ DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY = 10.0
 DEFAULT_WEAK_SHORT_WORD_PENALTY = 20.0
 DEFAULT_IMPLICIT_BOUNDARY_PENALTY = 5.0
 DEFAULT_ADJACENT_SINGLETON_PENALTY = 24.0
-DEFAULT_ARTICLE_UNKNOWN_BONUS = 4.0
+DEFAULT_ARTICLE_UNKNOWN_BONUS = 6.0
 
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
 ExtraWords = Mapping[str, float] | Collection[str]
 _ViterbiState = tuple[bool, bool]  # (previous token is singleton, previous token is contextual article)
+_ViterbiCosts = list[dict[_ViterbiState, float]]
+_ViterbiBack = list[dict[_ViterbiState, tuple[int, _ViterbiState]]]
 _START_STATE: _ViterbiState = (False, False)
 _ARTICLES = frozenset({"a", "an", "the"})
+_SHORT_WORD_THRESHOLD = 3
+_ARTICLE_UNKNOWN_MIN_LENGTH = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,13 +159,40 @@ class WordSegmenter(_CoreWordSegmenter):
         # Unknown text pays one token-opening cost plus a linear character
         # cost. Short OOV fragments are expensive because they are usually a
         # symptom of carving dictionary substrings out of one unknown token.
-        short_fragment_penalty = DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY * max(0, 3 - len(word))
+        short_fragment_penalty = DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY * max(
+            0,
+            _SHORT_WORD_THRESHOLD - len(word),
+        )
         return self.unknown_base_cost + self.unknown_char_cost * len(word) + short_fragment_penalty
 
     def _is_unknown(self, word: str) -> bool:
         return (
             not word.isdigit() and word not in self._custom_costs and word not in self.words and word not in self.cost
         )
+
+    def _known_word_cost(self, word: str) -> float | None:
+        """Return the cost of known lexical evidence, or None for an OOV candidate."""
+        if word in self.cost:
+            return super().word_cost(word)
+        if word not in self.words:
+            return None
+
+        # Bare spelling dictionaries frequently contain abbreviations,
+        # letters, symbols, and other short entries. Treat short dictionary-only
+        # matches as weak evidence so they cannot shred a coherent OOV token.
+        weak_penalty = self.weak_short_word_penalty * max(0, _SHORT_WORD_THRESHOLD - len(word))
+        return super().word_cost(word) + weak_penalty
+
+    def _unknown_word_cost(self, word: str) -> float:
+        """Return configured or default cost for an OOV candidate."""
+        if self._unknown_cost is None:
+            return self._default_unknown_cost(word)
+
+        cost = float(self._unknown_cost(word))
+        if not math.isfinite(cost):
+            msg = f"unknown-word cost must be finite: {word!r}"
+            raise ValueError(msg)
+        return cost
 
     def word_cost(self, word: str) -> float:
         """Return lexical cost, honoring custom, blocked, numeric, weak-dictionary, and unknown rules."""
@@ -175,27 +206,11 @@ class WordSegmenter(_CoreWordSegmenter):
         if word.isdigit():
             return self.numeric_cost
 
-        # Ranked/frequency-backed words are strong lexical evidence.
-        if word in self.cost:
-            return super().word_cost(word)
+        known = self._known_word_cost(word)
+        if known is not None:
+            return known
 
-        if word in self.words:
-            # Bare spelling dictionaries frequently contain abbreviations,
-            # letters, symbols, and other short entries. Treat 1-2 character
-            # dictionary-only matches as weak evidence so they cannot shred an
-            # otherwise coherent OOV token (e.g. ``nor q l``).
-            cost = super().word_cost(word)
-            cost += self.weak_short_word_penalty * max(0, 3 - len(word))
-            return cost
-
-        if self._unknown_cost is not None:
-            cost = float(self._unknown_cost(word))
-            if not math.isfinite(cost):
-                msg = f"unknown-word cost must be finite: {word!r}"
-                raise ValueError(msg)
-            return cost
-
-        return self._default_unknown_cost(word)
+        return self._unknown_word_cost(word)
 
     def _boundary_cost(self, text: str, pos: int) -> float:
         if pos <= 0 or pos >= len(text):
@@ -235,11 +250,11 @@ class WordSegmenter(_CoreWordSegmenter):
         if previous_singleton and current_singleton:
             cost += self.adjacent_singleton_penalty
 
-        # Articles after already recovered context are unusually strong
-        # evidence for a following noun even if that noun is out of vocabulary.
-        # Restricting this to contextual articles avoids splitting an unknown
-        # run merely because it begins with ``a``, ``an``, or ``the``.
-        if previous_article and len(word) >= 3 and self._is_unknown(word):
+        # A contextual article is evidence for a following noun. Restrict the
+        # bonus to longer OOV candidates: otherwise ``findacme`` can become
+        # ``find a cme`` merely because an unknown suffix happens to start with
+        # an article-looking character.
+        if previous_article and len(word) >= _ARTICLE_UNKNOWN_MIN_LENGTH and self._is_unknown(word):
             cost -= self.article_unknown_bonus
 
         return cost
@@ -248,45 +263,43 @@ class WordSegmenter(_CoreWordSegmenter):
     def _state_for(word: str, *, has_prefix: bool) -> _ViterbiState:
         return (len(word) == 1 and word.isalpha(), has_prefix and word in _ARTICLES)
 
-    def _segment_run(self, text: str) -> list[str]:
-        """Return the minimum-cost segmentation for one alphanumeric run."""
-        if not text:
-            return []
+    def _relax_word(
+        self,
+        text: str,
+        start: int,
+        end: int,
+        costs: _ViterbiCosts,
+        back: _ViterbiBack,
+    ) -> None:
+        previous_costs = costs[start]
+        if not previous_costs:
+            return
 
-        n = len(text)
-        # State is deliberately tiny: local sequence evidence only needs to
-        # know whether the previous token was a singleton and/or a contextual article.
-        dp: list[dict[_ViterbiState, float]] = [{} for _ in range(n + 1)]
-        back: list[dict[_ViterbiState, tuple[int, _ViterbiState]]] = [{} for _ in range(n + 1)]
-        dp[0][_START_STATE] = 0.0
+        word = text[start:end].lower()
+        lexical_cost = self.word_cost(word)
+        if not math.isfinite(lexical_cost):
+            return
 
-        for end in range(1, n + 1):
-            start_min = max(0, end - self.max_word_length)
-            for start in range(start_min, end):
-                if not dp[start]:
-                    continue
+        state = self._state_for(word, has_prefix=start > 0)
+        base_cost = lexical_cost + self._boundary_cost(text, start)
+        end_costs = costs[end]
+        end_back = back[end]
 
-                word = text[start:end].lower()
-                lexical_cost = self.word_cost(word)
-                if not math.isfinite(lexical_cost):
-                    continue
+        for previous_state, previous_cost in previous_costs.items():
+            candidate = previous_cost + base_cost + self._transition_cost(previous_state, word)
+            if candidate >= end_costs.get(state, math.inf):
+                continue
+            end_costs[state] = candidate
+            end_back[state] = (start, previous_state)
 
-                state = self._state_for(word, has_prefix=start > 0)
-                boundary_cost = self._boundary_cost(text, start)
-                for previous_state, previous_cost in dp[start].items():
-                    candidate = (
-                        previous_cost + lexical_cost + boundary_cost + self._transition_cost(previous_state, word)
-                    )
-                    if candidate < dp[end].get(state, math.inf):
-                        dp[end][state] = candidate
-                        back[end][state] = (start, previous_state)
-
-        if not dp[n]:
+    @staticmethod
+    def _backtrack(text: str, costs: _ViterbiCosts, back: _ViterbiBack) -> list[str]:
+        pos = len(text)
+        if not costs[pos]:
             return [text]
 
-        state = min(dp[n], key=dp[n].__getitem__)
+        state = min(costs[pos], key=costs[pos].__getitem__)
         result: list[str] = []
-        pos = n
         while pos > 0:
             previous = back[pos].get(state)
             if previous is None:
@@ -298,6 +311,25 @@ class WordSegmenter(_CoreWordSegmenter):
 
         result.reverse()
         return result
+
+    def _segment_run(self, text: str) -> list[str]:
+        """Return the minimum-cost segmentation for one alphanumeric run."""
+        if not text:
+            return []
+
+        n = len(text)
+        # State is deliberately tiny: local sequence evidence only needs to
+        # know whether the previous token was a singleton and/or a contextual article.
+        costs: _ViterbiCosts = [{} for _ in range(n + 1)]
+        back: _ViterbiBack = [{} for _ in range(n + 1)]
+        costs[0][_START_STATE] = 0.0
+
+        for end in range(1, n + 1):
+            start_min = max(0, end - self.max_word_length)
+            for start in range(start_min, end):
+                self._relax_word(text, start, end, costs, back)
+
+        return self._backtrack(text, costs, back)
 
     def segment_spans(self, text: str) -> list[SegmentSpan]:
         """Return lossless token/separator spans with offsets into *text*."""

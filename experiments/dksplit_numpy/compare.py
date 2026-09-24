@@ -45,14 +45,17 @@ REPRESENTATIVE_INPUTS = [
     "YouTubePlayer",
     "thisisnotable",
     "cannot",
+    "foo-bar_baz@example.com",
+    "naive.cafe-42",
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" * 2,
 ]
 
 
 def _random_inputs(count: int, seed: int) -> list[str]:
     rng = random.Random(seed)
-    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.@"
     return [
-        "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 32)))
+        "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 80)))
         for _ in range(count)
     ]
 

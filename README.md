@@ -42,7 +42,7 @@ Component words are normalized to lowercase before encoding and must be non-empt
 
 ## Reversibility
 
-Delimiter-based cases are decoded strictly and losslessly. Cases such as `camelCase`, `PascalCase`, and `flatcase` can be encoded, but are not decoded by guessing because capitalization does not preserve every possible word boundary.
+Delimiter-based cases are decoded strictly and losslessly. Cases such as `camelCase`, `PascalCase`, and `flatcase` can be encoded, but are not decoded by the strict Python `decode()` API because capitalization does not preserve every possible word boundary.
 
 `possible_cases()` reports every compatible case in deterministic preference order. `guess_case()` returns a case only when the interpretation is unique; with `should_raise=True`, it distinguishes invalid input from ambiguous input.
 
@@ -107,11 +107,17 @@ Case transitions such as `parseHTTPResponse` and transitions between digits and 
 
 ## CLI
 
-The command line exposes the same case semantics plus segmentation:
+The command line exposes the same case semantics plus segmentation. `decode` infers a unique case when `--case` is omitted:
 
 ```bash
 wordrobe encode --case camelCase hello world
 # helloWorld
+
+wordrobe decode hello_world
+# hello world
+
+wordrobe decode isThisACamel
+# is this a camel
 
 wordrobe decode --case snake_case hello_world
 # hello world
@@ -128,4 +134,6 @@ wordrobe guess --all hello
 wordrobe segment thisisatest
 ```
 
-`guess` exits with an error for ambiguous or invalid input unless `--all` is requested. `decode` likewise rejects non-reversible cases and noncanonical input rather than heuristically inventing boundaries.
+When `decode` infers or is explicitly given a reversible case, decoding remains strict and canonical. For implicit-boundary cases such as `camelCase`, `PascalCase`, `flatcase`, and `UPPERFLATCASE`, the CLI uses `WordSegmenter` to recover likely boundaries and emits lowercase semantic words. If the input is compatible with multiple cases, `decode` requires an explicit `--case` instead of choosing one arbitrarily.
+
+`guess` exits with an error for ambiguous or invalid input unless `--all` is requested.

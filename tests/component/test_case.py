@@ -14,6 +14,7 @@ from wordrobe import (
 )
 from wordrobe.case import REVERSIBLE_CASES
 
+
 WORDS = ["hello", "world", "example"]
 
 
@@ -94,5 +95,5 @@ def test_guess_case_can_raise_for_invalid_text() -> None:
 
 
 def test_encode_rejects_separator_inside_component_word() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not ASCII alphanumeric"):
         encode(["new_york", "city"], Case.SNAKE)

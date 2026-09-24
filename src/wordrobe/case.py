@@ -132,6 +132,25 @@ def _capitalize(word: str) -> str:
     return word[:1].upper() + word[1:]
 
 
+_ENCODING_STYLES = {
+    Case.SNAKE: ("_", str.lower, str.lower),
+    Case.SCREAMING_SNAKE: ("_", str.upper, str.upper),
+    Case.KEBAB: ("-", str.lower, str.lower),
+    Case.SCREAMING_KEBAB: ("-", str.upper, str.upper),
+    Case.TRAIN: ("-", _capitalize, _capitalize),
+    Case.DOT: (".", str.lower, str.lower),
+    Case.PATH: ("/", str.lower, str.lower),
+    Case.LOWER: (" ", str.lower, str.lower),
+    Case.UPPER: (" ", str.upper, str.upper),
+    Case.TITLE: (" ", _capitalize, _capitalize),
+    Case.SENTENCE: (" ", _capitalize, str.lower),
+    Case.CAMEL: ("", str.lower, _capitalize),
+    Case.PASCAL: ("", _capitalize, _capitalize),
+    Case.FLAT: ("", str.lower, str.lower),
+    Case.UPPER_FLAT: ("", str.upper, str.upper),
+}
+
+
 def encode(words: Iterable[str], case: Case) -> str:
     """
     Encode semantic component words in *case*.
@@ -147,60 +166,19 @@ def encode(words: Iterable[str], case: Case) -> str:
     >>> encode(["api", "client"], Case.PASCAL)
     'ApiClient'
     """
-    words = _normalize_words(words)
-
-    if not words:
+    normalized = _normalize_words(words)
+    if not normalized:
         return ""
 
-    if case is Case.SNAKE:
-        return "_".join(words)
+    try:
+        separator, first_transform, rest_transform = _ENCODING_STYLES[case]
+    except KeyError as exc:
+        msg = f"Unsupported case: {case!r}"
+        raise ValueError(msg) from exc
 
-    if case is Case.SCREAMING_SNAKE:
-        return "_".join(word.upper() for word in words)
-
-    if case is Case.KEBAB:
-        return "-".join(words)
-
-    if case is Case.SCREAMING_KEBAB:
-        return "-".join(word.upper() for word in words)
-
-    if case is Case.TRAIN:
-        return "-".join(_capitalize(word) for word in words)
-
-    if case is Case.DOT:
-        return ".".join(words)
-
-    if case is Case.PATH:
-        return "/".join(words)
-
-    if case is Case.LOWER:
-        return " ".join(words)
-
-    if case is Case.UPPER:
-        return " ".join(word.upper() for word in words)
-
-    if case is Case.TITLE:
-        return " ".join(_capitalize(word) for word in words)
-
-    if case is Case.SENTENCE:
-        first, *rest = words
-        return " ".join([_capitalize(first), *rest])
-
-    if case is Case.CAMEL:
-        first, *rest = words
-        return first + "".join(_capitalize(word) for word in rest)
-
-    if case is Case.PASCAL:
-        return "".join(_capitalize(word) for word in words)
-
-    if case is Case.FLAT:
-        return "".join(words)
-
-    if case is Case.UPPER_FLAT:
-        return "".join(word.upper() for word in words)
-
-    msg = f"Unsupported case: {case!r}"
-    raise ValueError(msg)
+    first, *rest = normalized
+    encoded_words = [first_transform(first), *(rest_transform(word) for word in rest)]
+    return separator.join(encoded_words)
 
 
 def decode(text: str, case: Case) -> list[str]:
@@ -273,25 +251,14 @@ def _matches_nonreversible_case(text: str, case: Case) -> bool:
     if not text or _ALNUM_RE.fullmatch(text) is None:
         return False
 
-    if case is Case.CAMEL:
-        # A leading digit carries no case information, so digit-leading
-        # strings can be compatible with both camelCase and PascalCase.
-        if not (text[0].islower() or text[0].isdigit()):
-            return False
-        return all(ch.isalnum() for ch in text)
-
-    if case is Case.PASCAL:
-        if not (text[0].isupper() or text[0].isdigit()):
-            return False
-        return all(ch.isalnum() for ch in text)
-
-    if case is Case.FLAT:
-        return text == text.lower()
-
-    if case is Case.UPPER_FLAT:
-        return text == text.upper()
-
-    return False
+    first = text[0]
+    matches = {
+        Case.CAMEL: first.islower() or first.isdigit(),
+        Case.PASCAL: first.isupper() or first.isdigit(),
+        Case.FLAT: text == text.lower(),
+        Case.UPPER_FLAT: text == text.upper(),
+    }
+    return matches.get(case, False)
 
 
 def possible_cases(text: str) -> list[Case]:
@@ -367,12 +334,13 @@ def guess_case(
     if len(candidates) == 1:
         return candidates[0]
 
-    if should_raise:
-        if not candidates:
-            raise InvalidCaseError(text)
-        raise AmbiguousCaseError(text, candidates)
+    if not should_raise:
+        return None
 
-    return None
+    if not candidates:
+        raise InvalidCaseError(text)
+
+    raise AmbiguousCaseError(text, candidates)
 
 
 __all__ = [

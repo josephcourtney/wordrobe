@@ -14,13 +14,13 @@ No third-party dependencies.
 
 from __future__ import annotations
 
-import contextlib
 import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import os
+    from collections.abc import Iterable
 
 # A small core vocabulary helps substantially when the system dictionary
 # provides no frequency information.
@@ -979,7 +979,7 @@ def normalize_word(word: str) -> str | None:
         word = word.split("/", 1)[0]
 
     # Remove common punctuation that may have vanished from input.
-    word = word.replace("'", "").replace("’", "")
+    word = word.replace("'", "").replace("\u2019", "")
 
     if not word or not word.isalpha():
         return None
@@ -1065,37 +1065,30 @@ class WordSegmenter:
             probability = 1.0 / (rank * math.log(n + 1))
             self.cost[word] = -math.log(probability)
 
+    def _add_dictionary_lines(self, lines: Iterable[str]) -> None:
+        first = True
+        for line in lines:
+            if first:
+                first = False
+                if line.strip().isdigit():
+                    continue
+
+            word = normalize_word(line)
+            if word and len(word) <= self.max_word_length:
+                self.words.add(word)
+
     def _load_dictionary(self, path: Path) -> bool:
         if not path.is_file():
             return False
 
         try:
-            with path.open(
-                "r",
-                encoding="utf-8",
-                errors="ignore",
-            ) as f:
-                first = True
-
-                for line in f:
-                    # Hunspell .dic files often start with a word count.
-                    if first:
-                        first = False
-                        stripped = line.strip()
-                        if stripped.isdigit():
-                            continue
-
-                    word = normalize_word(line)
-                    if not word:
-                        continue
-
-                    if len(word) <= self.max_word_length:
-                        self.words.add(word)
-
-            return True
-
+            handle = path.open("r", encoding="utf-8", errors="ignore")
         except OSError:
             return False
+
+        with handle:
+            self._add_dictionary_lines(handle)
+        return True
 
     def _load_system_dictionary(self) -> None:
         for filename in SYSTEM_WORDLISTS:
@@ -1104,73 +1097,65 @@ class WordSegmenter:
                 # One good system dictionary is enough.
                 return
 
+    @staticmethod
+    def _parse_frequency(line: str) -> tuple[str, float | None] | None:
+        pieces = line.strip().split()
+        if not pieces:
+            return None
+
+        word = normalize_word(pieces[0])
+        if not word:
+            return None
+
+        frequency = None
+        if len(pieces) > 1:
+            try:
+                frequency = float(pieces[1])
+            except ValueError:
+                pass
+
+        return word, frequency
+
+    def _read_frequency_entries(self, path: Path) -> list[tuple[str, float | None]] | None:
+        try:
+            handle = path.open("r", encoding="utf-8", errors="ignore")
+        except OSError:
+            return None
+
+        with handle:
+            return [entry for line in handle if (entry := self._parse_frequency(line)) is not None]
+
+    def _load_weighted_frequencies(self, entries: list[tuple[str, float | None]]) -> bool:
+        total = sum(freq for _, freq in entries if freq is not None and freq > 0)
+        if total <= 0:
+            return False
+
+        for word, freq in entries:
+            self.words.add(word)
+            if freq is not None and freq > 0:
+                self.cost[word] = -math.log(freq / total)
+        return True
+
+    def _load_ranked_frequencies(self, entries: list[tuple[str, float | None]]) -> None:
+        harmonic_normalizer = math.log(len(entries) + 1)
+        for rank, (word, _) in enumerate(entries, 1):
+            self.words.add(word)
+            probability = 1.0 / (rank * harmonic_normalizer)
+            self.cost[word] = -math.log(probability)
+
     def _load_frequency_file(self, path: Path) -> bool:
-        """
-        Load either:
-
-            word frequency
-
-        or a plain list assumed to be ordered by decreasing frequency.
-        """
+        """Load frequencies or a list ordered by decreasing frequency."""
         if not path.is_file():
             return False
 
-        entries = []
-
-        try:
-            with path.open(
-                "r",
-                encoding="utf-8",
-                errors="ignore",
-            ) as f:
-                for line in f:
-                    pieces = line.strip().split()
-                    if not pieces:
-                        continue
-
-                    word = normalize_word(pieces[0])
-                    if not word:
-                        continue
-
-                    frequency = None
-
-                    if len(pieces) >= 2:
-                        with contextlib.suppress(ValueError):
-                            frequency = float(pieces[1])
-
-                    entries.append((word, frequency))
-
-        except OSError:
-            return False
-
+        entries = self._read_frequency_entries(path)
         if not entries:
             return False
 
-        has_frequencies = any(freq is not None for _, freq in entries)
+        if any(freq is not None for _, freq in entries):
+            return self._load_weighted_frequencies(entries)
 
-        if has_frequencies:
-            total = sum(freq for _, freq in entries if freq is not None and freq > 0)
-
-            if total <= 0:
-                return False
-
-            for word, freq in entries:
-                self.words.add(word)
-
-                if freq is not None and freq > 0:
-                    self.cost[word] = -math.log(freq / total)
-
-        else:
-            # Treat line order as frequency rank.
-            n = len(entries)
-
-            harmonic_normalizer = math.log(n + 1)
-
-            for rank, (word, _) in enumerate(entries, 1):
-                self.words.add(word)
-                probability = 1.0 / (rank * harmonic_normalizer)
-                self.cost[word] = -math.log(probability)
-
+        self._load_ranked_frequencies(entries)
         return True
 
     def word_cost(self, word: str) -> float:
@@ -1256,7 +1241,10 @@ class WordSegmenter:
 
         for index in range(1, len(text) + 1):
             at_end = index == len(text)
-            changes_kind = not at_end and text[index - 1].isdigit() != text[index].isdigit()
+            changes_kind = (
+                not at_end
+                and text[index - 1].isdigit() != text[index].isdigit()
+            )
 
             if not at_end and not changes_kind:
                 continue
@@ -1272,3 +1260,4 @@ class WordSegmenter:
 
     def segment_string(self, text: str) -> str:
         return " ".join(self.segment(text))
+

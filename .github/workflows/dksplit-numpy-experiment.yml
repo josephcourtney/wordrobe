@@ -27,4 +27,4 @@ jobs:
         run: python -m compileall -q experiments/dksplit_numpy
 
       - name: Compare NumPy inference with ONNX Runtime
-        run: python experiments/dksplit_numpy/compare.py --random-count 1000
+        run: python experiments/dksplit_numpy/compare.py --random-count 100

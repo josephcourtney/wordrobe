@@ -1,6 +1,0 @@
-{
-  "tests/component/test_case.py": true,
-  "tests/component/test_cli.py": true,
-  "tests/component/test_cli_commands.py": true,
-  "tests/component/test_segment.py": true
-}

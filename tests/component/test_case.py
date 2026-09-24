@@ -14,7 +14,6 @@ from wordrobe import (
 )
 from wordrobe.case import REVERSIBLE_CASES
 
-
 WORDS = ["hello", "world", "example"]
 
 

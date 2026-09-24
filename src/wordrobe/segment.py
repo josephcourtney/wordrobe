@@ -5,15 +5,19 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from os import PathLike
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from wordrobe._segment_core import (
     COMMON_WORDS,
     SYSTEM_WORDLISTS,
-    WordSegmenter as _CoreWordSegmenter,
     normalize_word,
 )
+from wordrobe._segment_core import (
+    WordSegmenter as _CoreWordSegmenter,
+)
+
+if TYPE_CHECKING:
+    from os import PathLike
 
 DEFAULT_CUSTOM_WORD_COST = 5.0
 DEFAULT_NUMERIC_COST = 1.0
@@ -56,9 +60,7 @@ class WordSegmenter(_CoreWordSegmenter):
         numeric_boundary_bonus: float = DEFAULT_NUMERIC_BOUNDARY_BONUS,
     ) -> None:
         self._custom_costs = self._prepare_extra_words(extra_words, custom_word_cost)
-        self._blocked_words = frozenset(
-            filter(None, (self._normalize_custom_word(word) for word in blocked_words))
-        )
+        self._blocked_words = frozenset(filter(None, (self._normalize_custom_word(word) for word in blocked_words)))
         self._unknown_cost = unknown_cost
         self.numeric_cost = numeric_cost
         self.use_case_hints = use_case_hints
@@ -145,12 +147,7 @@ class WordSegmenter(_CoreWordSegmenter):
         if left.islower() and right.isupper():
             return -self.case_boundary_bonus
 
-        if (
-            left.isupper()
-            and right.isupper()
-            and pos + 1 < len(text)
-            and text[pos + 1].islower()
-        ):
+        if left.isupper() and right.isupper() and pos + 1 < len(text) and text[pos + 1].islower():
             return -self.case_boundary_bonus
 
         return 0.0

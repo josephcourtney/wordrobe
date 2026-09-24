@@ -62,9 +62,7 @@ def test_unknown_cost_callback_controls_unknown_word_scoring() -> None:
 
 
 def test_camel_case_boundaries_are_used_and_case_is_preserved() -> None:
-    segmenter = WordSegmenter(
-        extra_words={"parse": 1.0, "http": 1.0, "response": 1.0, "body": 1.0}
-    )
+    segmenter = WordSegmenter(extra_words={"parse": 1.0, "http": 1.0, "response": 1.0, "body": 1.0})
 
     assert segmenter.segment("parseHTTPResponseBody") == ["parse", "HTTP", "Response", "Body"]
 

@@ -14,6 +14,7 @@ No third-party dependencies.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1109,10 +1110,8 @@ class WordSegmenter:
 
         frequency = None
         if len(pieces) > 1:
-            try:
+            with contextlib.suppress(ValueError):
                 frequency = float(pieces[1])
-            except ValueError:
-                pass
 
         return word, frequency
 
@@ -1241,10 +1240,7 @@ class WordSegmenter:
 
         for index in range(1, len(text) + 1):
             at_end = index == len(text)
-            changes_kind = (
-                not at_end
-                and text[index - 1].isdigit() != text[index].isdigit()
-            )
+            changes_kind = not at_end and text[index - 1].isdigit() != text[index].isdigit()
 
             if not at_end and not changes_kind:
                 continue
@@ -1260,4 +1256,3 @@ class WordSegmenter:
 
     def segment_string(self, text: str) -> str:
         return " ".join(self.segment(text))
-

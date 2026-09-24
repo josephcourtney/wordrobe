@@ -160,10 +160,7 @@ class WordSegmenter(_CoreWordSegmenter):
 
     def _is_unknown(self, word: str) -> bool:
         return (
-            not word.isdigit()
-            and word not in self._custom_costs
-            and word not in self.words
-            and word not in self.cost
+            not word.isdigit() and word not in self._custom_costs and word not in self.words and word not in self.cost
         )
 
     def word_cost(self, word: str) -> float:
@@ -278,10 +275,7 @@ class WordSegmenter(_CoreWordSegmenter):
                 boundary_cost = self._boundary_cost(text, start)
                 for previous_state, previous_cost in dp[start].items():
                     candidate = (
-                        previous_cost
-                        + lexical_cost
-                        + boundary_cost
-                        + self._transition_cost(previous_state, word)
+                        previous_cost + lexical_cost + boundary_cost + self._transition_cost(previous_state, word)
                     )
                     if candidate < dp[end].get(state, math.inf):
                         dp[end][state] = candidate

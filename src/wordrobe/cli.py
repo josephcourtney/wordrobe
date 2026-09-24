@@ -8,11 +8,15 @@ from wordrobe._meta import metadata
 from wordrobe.case import (
     Case,
     CaseError,
-    decode as decode_case,
-    encode as encode_case,
     guess_case,
     is_reversible,
     possible_cases,
+)
+from wordrobe.case import (
+    decode as decode_case,
+)
+from wordrobe.case import (
+    encode as encode_case,
 )
 from wordrobe.segment import WordSegmenter
 
@@ -111,6 +115,7 @@ def convert_command(
 @app.command("guess")
 def guess_command(
     text: Annotated[str, typer.Argument(help="Text whose case should be identified.")],
+    *,
     all_matches: Annotated[
         bool,
         typer.Option("--all", help="Print every compatible case instead of requiring a unique match."),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import typer
 
 from wordrobe._meta import metadata
-from wordrobe.case import screaming_snake_case
+from wordrobe.case import Case, encode
 from wordrobe.segment import WordSegmenter
 
 ENTRYPOINT_NAME = ""
@@ -14,7 +14,7 @@ app = typer.Typer(
     help=metadata.description,
     context_settings={
         "help_option_names": ["-h", "--help"],
-        "auto_envvar_prefix": screaming_snake_case(metadata.name),
+        "auto_envvar_prefix": encode([metadata.name], Case.SCREAMING_SNAKE),
         "allow_interspersed_args": True,
     },
     pretty_exceptions_enable=True,
@@ -28,13 +28,13 @@ def main() -> None:
     """Wordrobe."""
 
 
-@app.command
-def segment(text: str) -> list[str]:
+@app.command()
+def segment(text: str) -> None:
     wordlist = None
 
     segmenter = WordSegmenter(wordlist=wordlist)
 
-    return segmenter.segment_string(text)
+    typer.echo(segmenter.segment_string(text))
 
 
 if __name__ == "__main__":

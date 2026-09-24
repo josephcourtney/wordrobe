@@ -1,6 +1,6 @@
 # Shared Python distribution operations. Managed by Skellington.
 
-PACKAGE_IMPORT := env("PACKAGE_IMPORT", "hadhiw")
+PACKAGE_IMPORT := env("PACKAGE_IMPORT", "wordrobe")
 CLI_SMOKE      := env("CLI_SMOKE", "")
 
 [group('production')]
@@ -35,3 +35,4 @@ release-smoke:
   if [ -n "{{CLI_SMOKE}}" ]; then
     PATH="$smoke_dir/bin:$PATH" bash -c "{{CLI_SMOKE}}"
   fi
+

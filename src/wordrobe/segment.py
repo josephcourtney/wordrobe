@@ -1204,13 +1204,8 @@ class WordSegmenter:
         # character separately.
         return self.unknown_base_cost + self.unknown_char_cost * math.sqrt(len(word))
 
-    def segment(self, text: str) -> list[str]:
-        """Return the best segmentation as a list of strings."""
-        text = "".join(c.lower() for c in text if c.isalpha())
-
-        if not text:
-            return []
-
+    def _segment_letters(self, text: str) -> list[str]:
+        """Return the best segmentation for a lowercase alphabetic run."""
         n = len(text)
 
         # dp[i] = cheapest cost for text[:i]
@@ -1233,7 +1228,6 @@ class WordSegmenter:
                     dp[end] = candidate
                     back[end] = start
 
-        # Reconstruct.
         result = []
         pos = n
 
@@ -1248,6 +1242,32 @@ class WordSegmenter:
             pos = start
 
         result.reverse()
+        return result
+
+    def segment(self, text: str) -> list[str]:
+        """Return the best segmentation while preserving numeric runs."""
+        text = "".join(c.lower() for c in text if c.isalnum())
+
+        if not text:
+            return []
+
+        result: list[str] = []
+        start = 0
+
+        for index in range(1, len(text) + 1):
+            at_end = index == len(text)
+            changes_kind = not at_end and text[index - 1].isdigit() != text[index].isdigit()
+
+            if not at_end and not changes_kind:
+                continue
+
+            run = text[start:index]
+            if run.isdigit():
+                result.append(run)
+            else:
+                result.extend(self._segment_letters(run))
+            start = index
+
         return result
 
     def segment_string(self, text: str) -> str:

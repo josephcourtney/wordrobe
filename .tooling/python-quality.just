@@ -1,6 +1,6 @@
 # Shared Python environment and quality operations. Managed by Skellington.
 
-PYTHON_PACKAGE := env("PYTHON_PACKAGE", "hadhiw")
+PYTHON_PACKAGE := env("PYTHON_PACKAGE", "wordrobe")
 
 UV_CACHE_DIR            := REPO_CACHE_DIR + "/uv"
 RUFF_CACHE_DIR          := REPO_CACHE_DIR + "/ruff"
@@ -228,3 +228,4 @@ scour:
   just clean
   just stash-untracked
   git clean -fXd -e .venv/
+

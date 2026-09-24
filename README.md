@@ -2,7 +2,7 @@
 
 > A costume change for words.
 
-`wordrobe` is a small Python utility for recognizing, decoding, converting, and heuristically segmenting common word and identifier conventions such as `snake_case`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `camelCase`, and `PascalCase`.
+`wordrobe` is a small Python utility for recognizing, decoding, converting, and heuristically recovering words from common identifier conventions such as `snake_case`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `camelCase`, `PascalCase`, and delimiter-free text.
 
 ## Development setup
 
@@ -42,23 +42,27 @@ Component words are normalized to lowercase before encoding and must be non-empt
 
 ## Reversibility
 
-Delimiter-based cases are decoded strictly and losslessly. Cases such as `camelCase`, `PascalCase`, and `flatcase` can be encoded, but are not decoded by the strict Python `decode()` API because capitalization does not preserve every possible word boundary.
+Delimiter-based cases are decoded strictly and losslessly by the Python `decode()` API. Cases such as `camelCase`, `PascalCase`, and `flatcase` cannot be inverted exactly because capitalization does not preserve every possible word boundary.
 
-`possible_cases()` reports every compatible case in deterministic preference order. `guess_case()` returns a case only when the interpretation is unique; with `should_raise=True`, it distinguishes invalid input from ambiguous input.
+`possible_cases()` reports every syntactically compatible case in deterministic preference order. `guess_case()` answers the separate question of which case convention is identifiable from syntax; it is not required for heuristic word recovery.
 
-## Segmentation
+## Word recovery
 
-`WordSegmenter` heuristically recovers words from unseparated or mixed-format text. It uses a small built-in common-word vocabulary, an available system dictionary when present, optional frequency information, and explicit boundary evidence. Numeric runs are preserved as tokens.
+`WordSegmenter` recovers words from unseparated or mixed-format text using minimum-cost dynamic programming over lexical and boundary evidence. It uses a compact built-in ranked vocabulary, an available system dictionary when present, optional frequency information, capitalization and numeric transitions, and configurable unknown-word costs.
 
 ```python
 from wordrobe.segment import WordSegmenter
 
 segmenter = WordSegmenter()
-segmenter.segment("word2number")
-# ['word', '2', 'number']
+
+segmenter.segment("thisisatest")
+# ['this', 'is', 'a', 'test']
+
+segmenter.segment("isthisacamel")
+# ['is', 'this', 'a', 'camel']
 
 segmenter.segment("parseHTTPResponseBody")
-# Uses case transitions as soft boundary evidence while preserving original spelling.
+# ['parse', 'HTTP', 'Response', 'Body']
 ```
 
 Punctuation is treated as a hard boundary. `segment()` returns only tokens; `segment_spans()` provides a lossless representation including separators and source offsets:
@@ -69,7 +73,22 @@ spans = segmenter.segment_spans("load-xstate_statechart")
 # 'load-xstate_statechart'
 ```
 
-### Custom vocabulary and scoring
+### Scoring
+
+Known words receive frequency/rank-derived costs. Unknown candidates use a base penalty plus a **linear per-character cost**, so concatenating several words into one long unknown token does not become artificially cheap. Very short unknown fragments receive a small additional penalty to reduce artifacts such as splitting an unknown word into a known prefix plus a stray letter.
+
+`unknown_base_cost` and `unknown_char_cost` tune the default unknown model. A custom callback can replace it entirely:
+
+```python
+def unknown_cost(word: str) -> float:
+    return 2.0 if word.startswith("x") else 20.0
+
+segmenter = WordSegmenter(unknown_cost=unknown_cost)
+```
+
+The callback must return a finite numeric cost.
+
+### Custom vocabulary
 
 Known project- or domain-specific words can be supplied as a collection using `custom_word_cost`, or as a mapping with explicit costs. Lower costs make a candidate more favorable.
 
@@ -88,17 +107,6 @@ segmenter.segment("scrootstatechart")
 
 `blocked_words` removes otherwise valid candidates from consideration. All explicit custom costs must be finite.
 
-Unknown-word behavior can be customized with a callback:
-
-```python
-def unknown_cost(word: str) -> float:
-    return 2.0 if word.startswith("x") else 20.0
-
-segmenter = WordSegmenter(unknown_cost=unknown_cost)
-```
-
-The callback must return a finite numeric cost. Without one, unknown spans use the configurable `unknown_base_cost` and `unknown_char_cost` heuristic.
-
 ### Dictionaries, frequencies, and boundary hints
 
 `wordlist=` selects an explicit dictionary file. If omitted, `WordSegmenter` searches common system wordlist locations. `frequency_file=` accepts either `word frequency` lines or a list ordered from most to least frequent.
@@ -107,7 +115,7 @@ Case transitions such as `parseHTTPResponse` and transitions between digits and 
 
 ## CLI
 
-The command line exposes the same case semantics plus segmentation. `decode` infers a unique case when `--case` is omitted:
+`decode` is the canonical word-recovery command. When `--case` is omitted it does **not** first require a unique case classification; it directly combines explicit boundaries, case transitions, numeric transitions, and lexical segmentation.
 
 ```bash
 wordrobe encode --case camelCase hello world
@@ -119,8 +127,14 @@ wordrobe decode hello_world
 wordrobe decode isThisACamel
 # is this a camel
 
+wordrobe decode isthisacamel
+# is this a camel
+
 wordrobe decode --case snake_case hello_world
 # hello world
+
+wordrobe convert --to snake_case isThisACamel
+# is_this_a_camel
 
 wordrobe convert --from snake_case --to PascalCase hello_world
 # HelloWorld
@@ -130,10 +144,8 @@ wordrobe guess hello_world
 
 wordrobe guess --all hello
 # prints every compatible case in deterministic preference order
-
-wordrobe segment thisisatest
 ```
 
-When `decode` infers or is explicitly given a reversible case, decoding remains strict and canonical. For implicit-boundary cases such as `camelCase`, `PascalCase`, `flatcase`, and `UPPERFLATCASE`, the CLI uses `WordSegmenter` to recover likely boundaries and emits lowercase semantic words. If the input is compatible with multiple cases, `decode` requires an explicit `--case` instead of choosing one arbitrarily.
+An explicit `--case` asks for that syntax to be validated. Reversible cases are then decoded exactly; implicit-boundary cases still require heuristic segmentation after validation.
 
-`guess` exits with an error for ambiguous or invalid input unless `--all` is requested.
+The former `segment` command remains as a hidden compatibility alias for `decode`; there is no longer a separate CLI segmentation policy. `guess` remains separate because identifying a case convention is a different question from recovering probable word boundaries.

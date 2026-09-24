@@ -1,6 +1,8 @@
+import math
+
 import pytest
 
-from wordrobe.segment import SegmentSpan, WordSegmenter
+from wordrobe.segment import COMMON_WORDS, SegmentSpan, WordSegmenter
 
 
 def test_segment_preserves_numeric_runs() -> None:
@@ -31,6 +33,45 @@ def test_segment_preserves_all_numeric_input() -> None:
     segmenter = WordSegmenter()
 
     assert segmenter.segment("123") == ["123"]
+
+
+def test_viterbi_splits_unseparated_common_words_without_system_dictionary(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+
+    assert segmenter.segment("thisisatest") == ["this", "is", "a", "test"]
+    assert segmenter.segment("isthisacamel") == ["is", "this", "a", "camel"]
+
+
+def test_default_unknown_cost_grows_linearly_with_length(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+
+    assert segmenter.word_cost("qzxvbnm") == pytest.approx(12.0 + 2.0 * 7)
+    assert segmenter.word_cost("q") == pytest.approx(12.0 + 2.0 + 2.0)
+
+
+def test_long_unknown_candidate_is_not_limited_by_dictionary_word_length(tmp_path) -> None:
+    target = "qzxvbnmqzxvbnmqzxvbnm"
+
+    def unknown_cost(word: str) -> float:
+        return 0.0 if word == target else 100.0
+
+    segmenter = WordSegmenter(
+        wordlist=tmp_path / "missing-dictionary",
+        max_word_length=32,
+        unknown_cost=unknown_cost,
+    )
+
+    assert segmenter.segment(target) == [target]
+
+
+def test_duplicate_common_words_keep_their_best_rank(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+    word = "just"
+    first_rank = COMMON_WORDS.index(word) + 1
+    expected = math.log(first_rank * math.log(len(COMMON_WORDS) + 1))
+
+    assert COMMON_WORDS.count(word) > 1
+    assert segmenter.cost[word] == pytest.approx(expected)
 
 
 def test_custom_words_accept_explicit_costs() -> None:

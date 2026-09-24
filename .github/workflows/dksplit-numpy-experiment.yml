@@ -1,12 +1,13 @@
 name: DKSplit NumPy experiment
 
 on:
-  push:
+  pull_request:
     branches:
-      - explore/dksplit-numpy
+      - main
     paths:
       - experiments/dksplit_numpy/**
       - .github/workflows/dksplit-numpy-experiment.yml
+  workflow_dispatch:
 
 jobs:
   inspect-and-compare:

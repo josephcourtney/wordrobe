@@ -51,6 +51,12 @@ def test_oov_cohesion_prefers_article_plus_unknown_noun(tmp_path) -> None:
     assert segmenter.segment("thisisaxyzzy") == ["this", "is", "a", "xyzzy"]
 
 
+def test_article_bonus_does_not_split_unknown_at_run_start(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+
+    assert segmenter.segment("aqzxvbnm") == ["aqzxvbnm"]
+
+
 def test_oov_cohesion_keeps_identifier_like_singleton_sequences_together(tmp_path) -> None:
     dictionary = tmp_path / "words"
     dictionary.write_text("ai\nq\nl\n", encoding="utf-8")
@@ -83,12 +89,6 @@ def test_default_unknown_cost_grows_linearly_with_length(tmp_path) -> None:
 
     assert segmenter.word_cost("qzxvbnm") == pytest.approx(12.0 + 4.0 * 7)
     assert segmenter.word_cost("q") == pytest.approx(12.0 + 4.0 + 20.0)
-
-
-def test_common_short_word_can_split_from_unknown_remainder(tmp_path) -> None:
-    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
-
-    assert segmenter.segment("aqzxvbnm") == ["a", "qzxvbnm"]
 
 
 def test_short_unknown_fragment_penalty_avoids_known_suffix_oversegmentation(tmp_path) -> None:

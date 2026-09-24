@@ -25,10 +25,16 @@ DEFAULT_CASE_BOUNDARY_BONUS = 4.0
 DEFAULT_NUMERIC_BOUNDARY_BONUS = 2.5
 DEFAULT_UNKNOWN_CHAR_COST = 4.0
 DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY = 10.0
+DEFAULT_WEAK_SHORT_WORD_PENALTY = 20.0
+DEFAULT_ADJACENT_SINGLETON_PENALTY = 24.0
+DEFAULT_ARTICLE_UNKNOWN_BONUS = 4.0
 
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
 ExtraWords = Mapping[str, float] | Collection[str]
+_ViterbiState = tuple[bool, bool]  # (previous token is singleton, previous token is article)
+_START_STATE: _ViterbiState = (False, False)
+_ARTICLES = frozenset({"a", "an", "the"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +48,7 @@ class SegmentSpan:
 
 
 class WordSegmenter(_CoreWordSegmenter):
-    """Segment text using lexical costs plus case and punctuation boundaries."""
+    """Segment text using lexical costs plus case, punctuation, and local sequence evidence."""
 
     def __init__(
         self,
@@ -60,6 +66,9 @@ class WordSegmenter(_CoreWordSegmenter):
         use_case_hints: bool = True,
         case_boundary_bonus: float = DEFAULT_CASE_BOUNDARY_BONUS,
         numeric_boundary_bonus: float = DEFAULT_NUMERIC_BOUNDARY_BONUS,
+        weak_short_word_penalty: float = DEFAULT_WEAK_SHORT_WORD_PENALTY,
+        adjacent_singleton_penalty: float = DEFAULT_ADJACENT_SINGLETON_PENALTY,
+        article_unknown_bonus: float = DEFAULT_ARTICLE_UNKNOWN_BONUS,
     ) -> None:
         self._custom_costs = self._prepare_extra_words(extra_words, custom_word_cost)
         self._blocked_words = frozenset(filter(None, (self._normalize_custom_word(word) for word in blocked_words)))
@@ -68,6 +77,12 @@ class WordSegmenter(_CoreWordSegmenter):
         self.use_case_hints = use_case_hints
         self.case_boundary_bonus = case_boundary_bonus
         self.numeric_boundary_bonus = numeric_boundary_bonus
+        self.weak_short_word_penalty = self._finite_nonnegative(weak_short_word_penalty, "weak_short_word_penalty")
+        self.adjacent_singleton_penalty = self._finite_nonnegative(
+            adjacent_singleton_penalty,
+            "adjacent_singleton_penalty",
+        )
+        self.article_unknown_bonus = self._finite_nonnegative(article_unknown_bonus, "article_unknown_bonus")
         configured_max_word_length = max_word_length
 
         super().__init__(
@@ -85,6 +100,14 @@ class WordSegmenter(_CoreWordSegmenter):
 
         self.words.update(self._custom_costs)
         self.cost.update(self._custom_costs)
+
+    @staticmethod
+    def _finite_nonnegative(value: float, name: str) -> float:
+        numeric = float(value)
+        if not math.isfinite(numeric) or numeric < 0:
+            msg = f"{name} must be a finite non-negative number"
+            raise ValueError(msg)
+        return numeric
 
     def _load_common_words(self) -> None:
         """Load ranked fallback words, preserving the best rank of duplicates."""
@@ -123,18 +146,22 @@ class WordSegmenter(_CoreWordSegmenter):
 
     def _default_unknown_cost(self, word: str) -> float:
         """Return a compositional cost for an unknown word candidate."""
-        # Unknown text is modeled roughly as a sequence of surprising
-        # characters plus a token-opening cost. The per-character term must be
-        # large enough that absorbing a very common short word into an unknown
-        # neighbor is not artificially cheap (``acamel`` versus ``a camel``).
-        # Conversely, 1-2 character unknown fragments receive a strong penalty
-        # so technical words are not split merely because they contain a known
-        # prefix or suffix (``scroot`` -> ``sc root``).
+        # Unknown text pays one token-opening cost plus a linear character
+        # cost. Short OOV fragments are expensive because they are usually a
+        # symptom of carving dictionary substrings out of one unknown token.
         short_fragment_penalty = DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY * max(0, 3 - len(word))
         return self.unknown_base_cost + self.unknown_char_cost * len(word) + short_fragment_penalty
 
+    def _is_unknown(self, word: str) -> bool:
+        return (
+            not word.isdigit()
+            and word not in self._custom_costs
+            and word not in self.words
+            and word not in self.cost
+        )
+
     def word_cost(self, word: str) -> float:
-        """Return lexical cost, honoring custom, blocked, numeric, and unknown rules."""
+        """Return lexical cost, honoring custom, blocked, numeric, weak-dictionary, and unknown rules."""
         if word in self._blocked_words:
             return math.inf
 
@@ -145,8 +172,18 @@ class WordSegmenter(_CoreWordSegmenter):
         if word.isdigit():
             return self.numeric_cost
 
-        if word in self.words or word in self.cost:
+        # Ranked/frequency-backed words are strong lexical evidence.
+        if word in self.cost:
             return super().word_cost(word)
+
+        if word in self.words:
+            # Bare spelling dictionaries frequently contain abbreviations,
+            # letters, symbols, and other short entries. Treat 1-2 character
+            # dictionary-only matches as weak evidence so they cannot shred an
+            # otherwise coherent OOV token (e.g. ``nor q l``).
+            cost = super().word_cost(word)
+            cost += self.weak_short_word_penalty * max(0, 3 - len(word))
+            return cost
 
         if self._unknown_cost is not None:
             cost = float(self._unknown_cost(word))
@@ -178,33 +215,81 @@ class WordSegmenter(_CoreWordSegmenter):
 
         return 0.0
 
+    def _transition_cost(self, previous: _ViterbiState, word: str) -> float:
+        previous_singleton, previous_article = previous
+        current_singleton = len(word) == 1 and word.isalpha()
+        cost = 0.0
+
+        # Consecutive implicit one-letter words are much more likely to be an
+        # identifier/OOV token than a genuine phrase (``openai`` vs
+        # ``open a i``). Explicit punctuation still forms hard run boundaries,
+        # so this only affects boundaries the segmenter itself is inventing.
+        if previous_singleton and current_singleton:
+            cost += self.adjacent_singleton_penalty
+
+        # Articles are unusually strong evidence for a following noun even if
+        # that noun is out of vocabulary. This resolves the common ambiguity
+        # where the first character of an unknown noun can instead complete a
+        # function word (``a snorql`` vs ``as norql``).
+        if previous_article and len(word) >= 3 and self._is_unknown(word):
+            cost -= self.article_unknown_bonus
+
+        return cost
+
+    @staticmethod
+    def _state_for(word: str) -> _ViterbiState:
+        return (len(word) == 1 and word.isalpha(), word in _ARTICLES)
+
     def _segment_run(self, text: str) -> list[str]:
         """Return the minimum-cost segmentation for one alphanumeric run."""
         if not text:
             return []
 
         n = len(text)
-        dp = [math.inf] * (n + 1)
-        back = [-1] * (n + 1)
-        dp[0] = 0.0
+        # State is deliberately tiny: local sequence evidence only needs to
+        # know whether the previous token was a singleton and/or an article.
+        dp: list[dict[_ViterbiState, float]] = [{} for _ in range(n + 1)]
+        back: list[dict[_ViterbiState, tuple[int, _ViterbiState]]] = [{} for _ in range(n + 1)]
+        dp[0][_START_STATE] = 0.0
 
         for end in range(1, n + 1):
             start_min = max(0, end - self.max_word_length)
             for start in range(start_min, end):
-                word = text[start:end].lower()
-                candidate = dp[start] + self.word_cost(word) + self._boundary_cost(text, start)
-                if candidate < dp[end]:
-                    dp[end] = candidate
-                    back[end] = start
+                if not dp[start]:
+                    continue
 
+                word = text[start:end].lower()
+                lexical_cost = self.word_cost(word)
+                if not math.isfinite(lexical_cost):
+                    continue
+
+                state = self._state_for(word)
+                boundary_cost = self._boundary_cost(text, start)
+                for previous_state, previous_cost in dp[start].items():
+                    candidate = (
+                        previous_cost
+                        + lexical_cost
+                        + boundary_cost
+                        + self._transition_cost(previous_state, word)
+                    )
+                    if candidate < dp[end].get(state, math.inf):
+                        dp[end][state] = candidate
+                        back[end][state] = (start, previous_state)
+
+        if not dp[n]:
+            return [text]
+
+        state = min(dp[n], key=dp[n].__getitem__)
         result: list[str] = []
         pos = n
         while pos > 0:
-            start = back[pos]
-            if start < 0:
+            previous = back[pos].get(state)
+            if previous is None:
                 return [text]
+            start, previous_state = previous
             result.append(text[start:pos])
             pos = start
+            state = previous_state
 
         result.reverse()
         return result
@@ -250,12 +335,15 @@ class WordSegmenter(_CoreWordSegmenter):
 
 __all__ = [
     "COMMON_WORDS",
+    "DEFAULT_ADJACENT_SINGLETON_PENALTY",
+    "DEFAULT_ARTICLE_UNKNOWN_BONUS",
     "DEFAULT_CASE_BOUNDARY_BONUS",
     "DEFAULT_CUSTOM_WORD_COST",
     "DEFAULT_NUMERIC_BOUNDARY_BONUS",
     "DEFAULT_NUMERIC_COST",
     "DEFAULT_UNKNOWN_CHAR_COST",
     "DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY",
+    "DEFAULT_WEAK_SHORT_WORD_PENALTY",
     "SYSTEM_WORDLISTS",
     "SegmentSpan",
     "WordSegmenter",

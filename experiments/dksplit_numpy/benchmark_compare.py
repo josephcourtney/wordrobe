@@ -63,7 +63,7 @@ def _topk_words(
 
 
 def _acceptable(row: dict[str, str]) -> set[str]:
-    return {value.strip() for value in (row["truth"], row["might_right"]) if value.strip()}
+    return {value.strip().lower() for value in (row["truth"], row["might_right"]) if value.strip()}
 
 
 def main() -> None:
@@ -77,12 +77,17 @@ def main() -> None:
 
         top1_parity = 0
         top3_order_parity = 0
-        onnx_top1_acceptable = 0
-        numpy_top1_acceptable = 0
-        onnx_top3_acceptable = 0
-        numpy_top3_acceptable = 0
-        onnx_only_correct = 0
-        numpy_only_correct = 0
+        top5_order_parity = 0
+        onnx_strict_top1 = 0
+        numpy_strict_top1 = 0
+        onnx_lenient_top1 = 0
+        numpy_lenient_top1 = 0
+        onnx_lenient_top3 = 0
+        numpy_lenient_top3 = 0
+        onnx_lenient_top5 = 0
+        numpy_lenient_top5 = 0
+        onnx_only_lenient_top1 = 0
+        numpy_only_lenient_top1 = 0
         max_abs_error = 0.0
         total_abs_error = 0.0
         emission_values = 0
@@ -91,7 +96,8 @@ def main() -> None:
         parity_divergences: list[tuple[str, list[str], list[str], set[str]]] = []
 
         for row in rows:
-            text = row["prefix"]
+            text = row["prefix"].strip()
+            truth = row["truth"].strip().lower()
             acceptable = _acceptable(row)
 
             started = time.perf_counter()
@@ -107,51 +113,61 @@ def main() -> None:
             total_abs_error += float(np.sum(difference))
             emission_values += difference.size
 
-            ref_top3 = _topk_words(
+            ref_top5 = _topk_words(
                 text,
                 ref_emissions,
                 reference.transitions,
                 reference.start_transitions,
                 reference.end_transitions,
-                3,
+                5,
             )
-            np_top3 = _topk_words(
+            np_top5 = _topk_words(
                 text,
                 np_emissions,
                 model.transitions,
                 model.start_transitions,
                 model.end_transitions,
-                3,
+                5,
             )
 
-            ref_strings = [" ".join(words) for words in ref_top3]
-            np_strings = [" ".join(words) for words in np_top3]
-            ref_top1_ok = ref_strings[0] in acceptable
-            np_top1_ok = np_strings[0] in acceptable
+            ref_strings = [" ".join(words) for words in ref_top5]
+            np_strings = [" ".join(words) for words in np_top5]
+            ref_lenient_top1 = ref_strings[0] in acceptable
+            np_lenient_top1 = np_strings[0] in acceptable
 
             top1_parity += ref_strings[0] == np_strings[0]
-            top3_order_parity += ref_strings == np_strings
-            onnx_top1_acceptable += ref_top1_ok
-            numpy_top1_acceptable += np_top1_ok
-            onnx_top3_acceptable += any(candidate in acceptable for candidate in ref_strings)
-            numpy_top3_acceptable += any(candidate in acceptable for candidate in np_strings)
-            onnx_only_correct += ref_top1_ok and not np_top1_ok
-            numpy_only_correct += np_top1_ok and not ref_top1_ok
+            top3_order_parity += ref_strings[:3] == np_strings[:3]
+            top5_order_parity += ref_strings == np_strings
+            onnx_strict_top1 += ref_strings[0] == truth
+            numpy_strict_top1 += np_strings[0] == truth
+            onnx_lenient_top1 += ref_lenient_top1
+            numpy_lenient_top1 += np_lenient_top1
+            onnx_lenient_top3 += any(candidate in acceptable for candidate in ref_strings[:3])
+            numpy_lenient_top3 += any(candidate in acceptable for candidate in np_strings[:3])
+            onnx_lenient_top5 += any(candidate in acceptable for candidate in ref_strings)
+            numpy_lenient_top5 += any(candidate in acceptable for candidate in np_strings)
+            onnx_only_lenient_top1 += ref_lenient_top1 and not np_lenient_top1
+            numpy_only_lenient_top1 += np_lenient_top1 and not ref_lenient_top1
 
             if ref_strings[0] != np_strings[0] and len(parity_divergences) < 20:
-                parity_divergences.append((text, ref_top3[0], np_top3[0], acceptable))
+                parity_divergences.append((text, ref_top5[0], np_top5[0], acceptable))
 
         count = len(rows)
         mean_abs_error = total_abs_error / emission_values
         print(f"benchmark_samples={count}")
         print(f"benchmark_top1_parity={top1_parity / count:.6%}")
         print(f"benchmark_top3_order_parity={top3_order_parity / count:.6%}")
-        print(f"benchmark_onnx_top1_acceptable={onnx_top1_acceptable / count:.6%}")
-        print(f"benchmark_numpy_top1_acceptable={numpy_top1_acceptable / count:.6%}")
-        print(f"benchmark_onnx_top3_acceptable={onnx_top3_acceptable / count:.6%}")
-        print(f"benchmark_numpy_top3_acceptable={numpy_top3_acceptable / count:.6%}")
-        print(f"benchmark_onnx_only_top1_correct={onnx_only_correct}")
-        print(f"benchmark_numpy_only_top1_correct={numpy_only_correct}")
+        print(f"benchmark_top5_order_parity={top5_order_parity / count:.6%}")
+        print(f"benchmark_onnx_strict_top1={onnx_strict_top1 / count:.6%}")
+        print(f"benchmark_numpy_strict_top1={numpy_strict_top1 / count:.6%}")
+        print(f"benchmark_onnx_lenient_top1={onnx_lenient_top1 / count:.6%}")
+        print(f"benchmark_numpy_lenient_top1={numpy_lenient_top1 / count:.6%}")
+        print(f"benchmark_onnx_lenient_top3={onnx_lenient_top3 / count:.6%}")
+        print(f"benchmark_numpy_lenient_top3={numpy_lenient_top3 / count:.6%}")
+        print(f"benchmark_onnx_lenient_top5={onnx_lenient_top5 / count:.6%}")
+        print(f"benchmark_numpy_lenient_top5={numpy_lenient_top5 / count:.6%}")
+        print(f"benchmark_onnx_only_lenient_top1={onnx_only_lenient_top1}")
+        print(f"benchmark_numpy_only_lenient_top1={numpy_only_lenient_top1}")
         print(f"benchmark_max_abs_emission_error={max_abs_error:.9g}")
         print(f"benchmark_mean_abs_emission_error={mean_abs_error:.9g}")
         print(f"benchmark_onnx_seconds={onnx_seconds:.6f}")

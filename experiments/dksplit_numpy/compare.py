@@ -83,16 +83,19 @@ def compare(random_count: int, seed: int) -> int:
         numpy_model = NumpyDKSplit(converted_path)
         reference = Splitter(model_path=str(onnx_path), crf_path=str(crf_path), num_threads=1)
 
+        representative_count = len(REPRESENTATIVE_INPUTS)
         texts = REPRESENTATIVE_INPUTS + _random_inputs(random_count, seed)
         max_abs_error = 0.0
         sum_abs_error = 0.0
         emission_values = 0
         segment_matches = 0
+        representative_matches = 0
+        random_matches = 0
         divergences: list[tuple[str, list[str], list[str], float]] = []
         numpy_seconds = 0.0
         onnx_seconds = 0.0
 
-        for text in texts:
+        for index, text in enumerate(texts):
             expected_ids = _text_to_ids_fast(text.lower()[:MAX_LEN])
             actual_ids = text_to_ids(text)
             if not np.array_equal(expected_ids, actual_ids):
@@ -120,17 +123,28 @@ def compare(random_count: int, seed: int) -> int:
             numpy_words = numpy_model.split(text)
             if reference_words == numpy_words:
                 segment_matches += 1
+                if index < representative_count:
+                    representative_matches += 1
+                else:
+                    random_matches += 1
             elif len(divergences) < 12:
                 divergences.append((text, reference_words, numpy_words, sample_max))
 
         total = len(texts)
         mean_abs_error = sum_abs_error / emission_values if emission_values else 0.0
         print(f"samples={total}")
+        print(f"representative_samples={representative_count}")
+        print(f"random_samples={random_count}")
         print(f"emission_values={emission_values}")
         print(f"max_abs_emission_error={max_abs_error:.9g}")
         print(f"mean_abs_emission_error={mean_abs_error:.9g}")
         print(f"segmentation_matches={segment_matches}")
         print(f"segmentation_parity={segment_matches / total:.6%}")
+        print(f"representative_matches={representative_matches}")
+        print(f"representative_parity={representative_matches / representative_count:.6%}")
+        if random_count:
+            print(f"random_matches={random_matches}")
+            print(f"random_parity={random_matches / random_count:.6%}")
         print(f"onnx_seconds={onnx_seconds:.6f}")
         print(f"numpy_seconds={numpy_seconds:.6f}")
         if divergences:

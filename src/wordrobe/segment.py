@@ -26,6 +26,7 @@ DEFAULT_NUMERIC_BOUNDARY_BONUS = 2.5
 DEFAULT_UNKNOWN_CHAR_COST = 4.0
 DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY = 10.0
 DEFAULT_WEAK_SHORT_WORD_PENALTY = 20.0
+DEFAULT_IMPLICIT_BOUNDARY_PENALTY = 5.0
 DEFAULT_ADJACENT_SINGLETON_PENALTY = 24.0
 DEFAULT_ARTICLE_UNKNOWN_BONUS = 4.0
 
@@ -67,6 +68,7 @@ class WordSegmenter(_CoreWordSegmenter):
         case_boundary_bonus: float = DEFAULT_CASE_BOUNDARY_BONUS,
         numeric_boundary_bonus: float = DEFAULT_NUMERIC_BOUNDARY_BONUS,
         weak_short_word_penalty: float = DEFAULT_WEAK_SHORT_WORD_PENALTY,
+        implicit_boundary_penalty: float = DEFAULT_IMPLICIT_BOUNDARY_PENALTY,
         adjacent_singleton_penalty: float = DEFAULT_ADJACENT_SINGLETON_PENALTY,
         article_unknown_bonus: float = DEFAULT_ARTICLE_UNKNOWN_BONUS,
     ) -> None:
@@ -78,6 +80,10 @@ class WordSegmenter(_CoreWordSegmenter):
         self.case_boundary_bonus = case_boundary_bonus
         self.numeric_boundary_bonus = numeric_boundary_bonus
         self.weak_short_word_penalty = self._finite_nonnegative(weak_short_word_penalty, "weak_short_word_penalty")
+        self.implicit_boundary_penalty = self._finite_nonnegative(
+            implicit_boundary_penalty,
+            "implicit_boundary_penalty",
+        )
         self.adjacent_singleton_penalty = self._finite_nonnegative(
             adjacent_singleton_penalty,
             "adjacent_singleton_penalty",
@@ -198,22 +204,27 @@ class WordSegmenter(_CoreWordSegmenter):
         if pos <= 0 or pos >= len(text):
             return 0.0
 
+        # Every boundary invented inside an uninterrupted alphanumeric run
+        # needs some evidence. Explicit punctuation is handled as a separate
+        # run and therefore pays no such penalty. Case/numeric transitions are
+        # positive boundary evidence and offset this cohesion prior.
+        cost = self.implicit_boundary_penalty
         left = text[pos - 1]
         right = text[pos]
 
         if left.isdigit() != right.isdigit():
-            return -self.numeric_boundary_bonus
+            return cost - self.numeric_boundary_bonus
 
         if not self.use_case_hints:
-            return 0.0
+            return cost
 
         if left.islower() and right.isupper():
-            return -self.case_boundary_bonus
+            return cost - self.case_boundary_bonus
 
         if left.isupper() and right.isupper() and pos + 1 < len(text) and text[pos + 1].islower():
-            return -self.case_boundary_bonus
+            return cost - self.case_boundary_bonus
 
-        return 0.0
+        return cost
 
     def _transition_cost(self, previous: _ViterbiState, word: str) -> float:
         previous_singleton, previous_article = previous
@@ -339,6 +350,7 @@ __all__ = [
     "DEFAULT_ARTICLE_UNKNOWN_BONUS",
     "DEFAULT_CASE_BOUNDARY_BONUS",
     "DEFAULT_CUSTOM_WORD_COST",
+    "DEFAULT_IMPLICIT_BOUNDARY_PENALTY",
     "DEFAULT_NUMERIC_BOUNDARY_BONUS",
     "DEFAULT_NUMERIC_COST",
     "DEFAULT_UNKNOWN_CHAR_COST",

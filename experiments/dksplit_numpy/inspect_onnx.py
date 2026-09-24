@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import dksplit
 import onnx
@@ -22,6 +23,25 @@ def _shape(value_info: onnx.ValueInfoProto) -> list[int | str | None]:
     return dims
 
 
+def _jsonable_attribute(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, onnx.TensorProto):
+        array = numpy_helper.to_array(value)
+        return {
+            "tensor_dtype": str(array.dtype),
+            "tensor_shape": list(array.shape),
+            "tensor_values": array.tolist() if array.size <= 16 else None,
+        }
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_attribute(item) for item in value]
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
+
+
 def main() -> None:
     package_dir = Path(dksplit.__file__).resolve().parent
     model_path = package_dir / "models" / "dksplit-int8.onnx"
@@ -38,14 +58,10 @@ def main() -> None:
     }
     nodes = []
     for index, node in enumerate(graph.node):
-        attrs = {}
-        for attr in node.attribute:
-            value = onnx.helper.get_attribute_value(attr)
-            if isinstance(value, bytes):
-                value = value.decode("utf-8", errors="replace")
-            if hasattr(value, "tolist"):
-                value = value.tolist()
-            attrs[attr.name] = value
+        attrs = {
+            attr.name: _jsonable_attribute(onnx.helper.get_attribute_value(attr))
+            for attr in node.attribute
+        }
         nodes.append(
             {
                 "index": index,

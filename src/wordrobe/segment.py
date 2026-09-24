@@ -23,7 +23,8 @@ DEFAULT_CUSTOM_WORD_COST = 5.0
 DEFAULT_NUMERIC_COST = 1.0
 DEFAULT_CASE_BOUNDARY_BONUS = 4.0
 DEFAULT_NUMERIC_BOUNDARY_BONUS = 2.5
-DEFAULT_UNKNOWN_CHAR_COST = 2.0
+DEFAULT_UNKNOWN_CHAR_COST = 4.0
+DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY = 10.0
 
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
@@ -122,12 +123,14 @@ class WordSegmenter(_CoreWordSegmenter):
 
     def _default_unknown_cost(self, word: str) -> float:
         """Return a compositional cost for an unknown word candidate."""
-        # A linear character term is essential here. The former sqrt(length)
-        # term made one long unknown span systematically cheaper than several
-        # ordinary known words, defeating Viterbi segmentation on inputs such
-        # as ``thisisatest``. A small short-fragment penalty also discourages
-        # artifacts such as splitting an unknown word into ``came`` + ``l``.
-        short_fragment_penalty = max(0, 3 - len(word))
+        # Unknown text is modeled roughly as a sequence of surprising
+        # characters plus a token-opening cost. The per-character term must be
+        # large enough that absorbing a very common short word into an unknown
+        # neighbor is not artificially cheap (``acamel`` versus ``a camel``).
+        # Conversely, 1-2 character unknown fragments receive a strong penalty
+        # so technical words are not split merely because they contain a known
+        # prefix or suffix (``scroot`` -> ``sc root``).
+        short_fragment_penalty = DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY * max(0, 3 - len(word))
         return self.unknown_base_cost + self.unknown_char_cost * len(word) + short_fragment_penalty
 
     def word_cost(self, word: str) -> float:
@@ -252,6 +255,7 @@ __all__ = [
     "DEFAULT_NUMERIC_BOUNDARY_BONUS",
     "DEFAULT_NUMERIC_COST",
     "DEFAULT_UNKNOWN_CHAR_COST",
+    "DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY",
     "SYSTEM_WORDLISTS",
     "SegmentSpan",
     "WordSegmenter",

@@ -32,7 +32,7 @@ DEFAULT_ARTICLE_UNKNOWN_BONUS = 4.0
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
 ExtraWords = Mapping[str, float] | Collection[str]
-_ViterbiState = tuple[bool, bool]  # (previous token is singleton, previous token is article)
+_ViterbiState = tuple[bool, bool]  # (previous token is singleton, previous token is contextual article)
 _START_STATE: _ViterbiState = (False, False)
 _ARTICLES = frozenset({"a", "an", "the"})
 
@@ -227,18 +227,18 @@ class WordSegmenter(_CoreWordSegmenter):
         if previous_singleton and current_singleton:
             cost += self.adjacent_singleton_penalty
 
-        # Articles are unusually strong evidence for a following noun even if
-        # that noun is out of vocabulary. This resolves the common ambiguity
-        # where the first character of an unknown noun can instead complete a
-        # function word (``a snorql`` vs ``as norql``).
+        # Articles after already recovered context are unusually strong
+        # evidence for a following noun even if that noun is out of vocabulary.
+        # Restricting this to contextual articles avoids splitting an unknown
+        # run merely because it begins with ``a``, ``an``, or ``the``.
         if previous_article and len(word) >= 3 and self._is_unknown(word):
             cost -= self.article_unknown_bonus
 
         return cost
 
     @staticmethod
-    def _state_for(word: str) -> _ViterbiState:
-        return (len(word) == 1 and word.isalpha(), word in _ARTICLES)
+    def _state_for(word: str, *, has_prefix: bool) -> _ViterbiState:
+        return (len(word) == 1 and word.isalpha(), has_prefix and word in _ARTICLES)
 
     def _segment_run(self, text: str) -> list[str]:
         """Return the minimum-cost segmentation for one alphanumeric run."""
@@ -247,7 +247,7 @@ class WordSegmenter(_CoreWordSegmenter):
 
         n = len(text)
         # State is deliberately tiny: local sequence evidence only needs to
-        # know whether the previous token was a singleton and/or an article.
+        # know whether the previous token was a singleton and/or a contextual article.
         dp: list[dict[_ViterbiState, float]] = [{} for _ in range(n + 1)]
         back: list[dict[_ViterbiState, tuple[int, _ViterbiState]]] = [{} for _ in range(n + 1)]
         dp[0][_START_STATE] = 0.0
@@ -263,7 +263,7 @@ class WordSegmenter(_CoreWordSegmenter):
                 if not math.isfinite(lexical_cost):
                     continue
 
-                state = self._state_for(word)
+                state = self._state_for(word, has_prefix=start > 0)
                 boundary_cost = self._boundary_cost(text, start)
                 for previous_state, previous_cost in dp[start].items():
                     candidate = (

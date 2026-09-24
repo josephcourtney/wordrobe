@@ -1,4 +1,4 @@
-"""Compare both exploratory NumPy DKSplit backends with real ONNX Runtime."""
+"""Compare exploratory NumPy DKSplit backends with real ONNX Runtime."""
 
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def _print_metrics(
             print(f"  {text!r}: onnx={expected!r} numpy={actual!r} max_abs_error={error:.9g}")
 
 
-def compare(random_count: int, seed: int) -> int:
+def compare(random_count: int, seed: int, *, include_quantized: bool) -> int:
     onnx_path, crf_path = _model_paths()
     with tempfile.TemporaryDirectory(prefix="dksplit-numpy-") as temp_dir:
         converted_path = Path(temp_dir) / "dksplit-numpy.npz"
@@ -169,10 +169,9 @@ def compare(random_count: int, seed: int) -> int:
         print(f"converted_bytes={converted_path.stat().st_size}")
 
         reference = Splitter(model_path=str(onnx_path), crf_path=str(crf_path), num_threads=1)
-        models: list[tuple[str, _NumpyModel]] = [
-            ("float32", FloatNumpyDKSplit(converted_path)),
-            ("quantized", NumpyDKSplit(converted_path)),
-        ]
+        models: list[tuple[str, _NumpyModel]] = [("float32", FloatNumpyDKSplit(converted_path))]
+        if include_quantized:
+            models.append(("quantized", NumpyDKSplit(converted_path)))
         metrics = {name: _Metrics() for name, _model in models}
 
         representative_count = len(REPRESENTATIVE_INPUTS)
@@ -229,12 +228,17 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--random-count", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20260924)
+    parser.add_argument(
+        "--skip-quantized",
+        action="store_true",
+        help="run only the practical float32 backend",
+    )
     return parser
 
 
 def main() -> None:
     args = _parser().parse_args()
-    raise SystemExit(compare(args.random_count, args.seed))
+    raise SystemExit(compare(args.random_count, args.seed, include_quantized=not args.skip_quantized))
 
 
 if __name__ == "__main__":

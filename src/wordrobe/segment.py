@@ -23,6 +23,11 @@ DEFAULT_CUSTOM_WORD_COST = 5.0
 DEFAULT_NUMERIC_COST = 1.0
 DEFAULT_CASE_BOUNDARY_BONUS = 4.0
 DEFAULT_NUMERIC_BOUNDARY_BONUS = 2.5
+DEFAULT_UNKNOWN_CHAR_COST = 2.0
+
+# Words that are unusually important to wordrobe itself but are not guaranteed
+# to occur in the compact generic fallback vocabulary or a system dictionary.
+_DOMAIN_WORDS = frozenset({"camel", "kebab", "pascal", "snake"})
 
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
@@ -48,7 +53,7 @@ class WordSegmenter(_CoreWordSegmenter):
         frequency_file: str | PathLike[str] | None = None,
         max_word_length: int = 32,
         unknown_base_cost: float = 12.0,
-        unknown_char_cost: float = 1.8,
+        unknown_char_cost: float = DEFAULT_UNKNOWN_CHAR_COST,
         *,
         extra_words: ExtraWords = (),
         blocked_words: Collection[str] = (),
@@ -76,10 +81,23 @@ class WordSegmenter(_CoreWordSegmenter):
             unknown_char_cost=unknown_char_cost,
         )
 
+        # Parent initialization shortens max_word_length to the longest known
+        # dictionary word. That optimization is invalid when unknown spans are
+        # legal candidates: a long unknown identifier must remain representable.
+        self.max_word_length = configured_max_word_length
+
+        self.words.update(_DOMAIN_WORDS)
         self.words.update(self._custom_costs)
         self.cost.update(self._custom_costs)
-        longest_known = max(map(len, self.words), default=1)
-        self.max_word_length = min(configured_max_word_length, longest_known)
+
+    def _load_common_words(self) -> None:
+        """Load ranked fallback words, preserving the best rank of duplicates."""
+        n = len(COMMON_WORDS)
+        normalizer = math.log(n + 1)
+
+        for rank, word in enumerate(COMMON_WORDS, 1):
+            self.words.add(word)
+            self.cost.setdefault(word, math.log(rank * normalizer))
 
     @staticmethod
     def _normalize_custom_word(word: str) -> str | None:
@@ -107,6 +125,16 @@ class WordSegmenter(_CoreWordSegmenter):
             result[normalized] = numeric_cost
         return result
 
+    def _default_unknown_cost(self, word: str) -> float:
+        """Return a compositional cost for an unknown word candidate."""
+        # A linear character term is essential here. The former sqrt(length)
+        # term made one long unknown span systematically cheaper than several
+        # ordinary known words, defeating Viterbi segmentation on inputs such
+        # as ``thisisatest``. A small short-fragment penalty also discourages
+        # artifacts such as splitting an unknown word into ``came`` + ``l``.
+        short_fragment_penalty = max(0, 3 - len(word))
+        return self.unknown_base_cost + self.unknown_char_cost * len(word) + short_fragment_penalty
+
     def word_cost(self, word: str) -> float:
         """Return lexical cost, honoring custom, blocked, numeric, and unknown rules."""
         if word in self._blocked_words:
@@ -129,7 +157,7 @@ class WordSegmenter(_CoreWordSegmenter):
                 raise ValueError(msg)
             return cost
 
-        return super().word_cost(word)
+        return self._default_unknown_cost(word)
 
     def _boundary_cost(self, text: str, pos: int) -> float:
         if pos <= 0 or pos >= len(text):
@@ -153,7 +181,7 @@ class WordSegmenter(_CoreWordSegmenter):
         return 0.0
 
     def _segment_run(self, text: str) -> list[str]:
-        """Return the best segmentation for one alphanumeric run."""
+        """Return the minimum-cost segmentation for one alphanumeric run."""
         if not text:
             return []
 
@@ -228,6 +256,7 @@ __all__ = [
     "DEFAULT_CUSTOM_WORD_COST",
     "DEFAULT_NUMERIC_BOUNDARY_BONUS",
     "DEFAULT_NUMERIC_COST",
+    "DEFAULT_UNKNOWN_CHAR_COST",
     "SYSTEM_WORDLISTS",
     "SegmentSpan",
     "WordSegmenter",

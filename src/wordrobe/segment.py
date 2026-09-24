@@ -25,10 +25,6 @@ DEFAULT_CASE_BOUNDARY_BONUS = 4.0
 DEFAULT_NUMERIC_BOUNDARY_BONUS = 2.5
 DEFAULT_UNKNOWN_CHAR_COST = 2.0
 
-# Words that are unusually important to wordrobe itself but are not guaranteed
-# to occur in the compact generic fallback vocabulary or a system dictionary.
-_DOMAIN_WORDS = frozenset({"camel", "kebab", "pascal", "snake"})
-
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
 ExtraWords = Mapping[str, float] | Collection[str]
@@ -86,7 +82,6 @@ class WordSegmenter(_CoreWordSegmenter):
         # legal candidates: a long unknown identifier must remain representable.
         self.max_word_length = configured_max_word_length
 
-        self.words.update(_DOMAIN_WORDS)
         self.words.update(self._custom_costs)
         self.cost.update(self._custom_costs)
 

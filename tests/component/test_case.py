@@ -12,7 +12,7 @@ from wordrobe import (
     possible_cases,
     translate,
 )
-from wordrobe.case import REVERSIBLE_CASES
+from wordrobe.case import CASE_PREFERENCE, REVERSIBLE_CASES
 
 WORDS = ["hello", "world", "example"]
 
@@ -96,3 +96,32 @@ def test_guess_case_can_raise_for_invalid_text() -> None:
 def test_encode_rejects_separator_inside_component_word() -> None:
     with pytest.raises(ValueError, match="not ASCII alphanumeric"):
         encode(["new_york", "city"], Case.SNAKE)
+
+
+@pytest.mark.parametrize("case", list(Case))
+def test_empty_word_list_has_canonical_empty_encoding(case: Case) -> None:
+    assert encode([], case) == ""
+
+
+@pytest.mark.parametrize("case", sorted(REVERSIBLE_CASES, key=lambda item: item.value))
+def test_empty_text_decodes_to_empty_word_list(case: Case) -> None:
+    assert decode("", case) == []
+
+
+def test_empty_text_is_compatible_with_every_case() -> None:
+    assert possible_cases("") == list(CASE_PREFERENCE)
+
+
+def test_digit_bearing_components_round_trip_in_reversible_cases() -> None:
+    assert encode(["api", "v2"], Case.CAMEL) == "apiV2"
+    assert decode("api_v2", Case.SNAKE) == ["api", "v2"]
+
+
+def test_encoding_normalizes_component_acronyms() -> None:
+    assert encode(["HTTP", "server"], Case.PASCAL) == "HttpServer"
+
+
+@pytest.mark.parametrize("text", ["hello__world", "hello_", "_hello"])
+def test_decode_rejects_repeated_or_empty_components(text: str) -> None:
+    with pytest.raises(InvalidCaseError):
+        decode(text, Case.SNAKE)

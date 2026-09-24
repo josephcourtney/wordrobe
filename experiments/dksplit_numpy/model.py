@@ -1,11 +1,10 @@
 """NumPy-only inference for the fixed DKSplit BiLSTM-CRF architecture.
 
 This is an exploratory reimplementation, not part of wordrobe's public API.
-The converted archive contains DKSplit's original quantized weights. LSTM
-weights are dequantized to float32 once at load time; the final projection
-reproduces ONNX's DynamicQuantizeLinear + MatMulInteger path directly. The
-remaining numerical difference from ONNX Runtime is therefore confined to the
-three DynamicQuantizeLSTM operators.
+The runtime consumes DKSplit's original INT8 weights and reproduces the
+activation quantization used by ONNX Runtime's DynamicQuantizeLSTM and final
+DynamicQuantizeLinear/MatMulInteger projection. ONNX is needed only by the
+one-time converter and parity harness, not by this inference module.
 """
 
 from __future__ import annotations
@@ -37,6 +36,7 @@ def text_to_ids(text: str) -> np.ndarray:
 
 
 def _dequantize(q: np.ndarray, scale: np.ndarray, zero_point: np.ndarray) -> np.ndarray:
+    """Dequantize a static tensor such as the character embedding table."""
     qf = np.asarray(q, dtype=np.float32)
     scale_f = np.asarray(scale, dtype=np.float32)
     zp_f = np.asarray(zero_point, dtype=np.float32)
@@ -47,37 +47,44 @@ def _dequantize(q: np.ndarray, scale: np.ndarray, zero_point: np.ndarray) -> np.
 
 
 def _dynamic_quantize_uint8(value: np.ndarray) -> tuple[np.ndarray, np.float32, np.uint8]:
-    """Reproduce ONNX DynamicQuantizeLinear's per-tensor uint8 transform."""
+    """Reproduce ONNX Runtime's uint8 GetQuantizationParameter + quantize."""
     x = np.asarray(value, dtype=np.float32)
     x_min = np.float32(min(0.0, float(np.min(x))))
     x_max = np.float32(max(0.0, float(np.max(x))))
-    scale = np.float32((x_max - x_min) / 255.0)
-    if scale == 0.0:
-        scale = np.float32(1.0)
+    scale = np.float32(1.0 if x_max == x_min else (x_max - x_min) / 255.0)
     zero_point_float = np.float32(-x_min / scale)
     zero_point = np.uint8(np.clip(np.rint(zero_point_float), 0, 255))
     quantized = np.clip(np.rint(x / scale) + zero_point, 0, 255).astype(np.uint8)
     return quantized, scale, zero_point
 
 
+def _quantized_matmul_from_activation(
+    activation: np.ndarray,
+    weight_q: np.ndarray,
+    weight_scale: np.float32,
+    weight_zero_point: np.generic | int,
+) -> np.ndarray:
+    """Run one dynamically-quantized activation x statically-quantized weight GEMM."""
+    activation_q, activation_scale, activation_zero_point = _dynamic_quantize_uint8(activation)
+    left = activation_q.astype(np.int32) - np.int32(activation_zero_point)
+    right = np.asarray(weight_q, dtype=np.int32) - np.int32(weight_zero_point)
+    accumulator = left @ right
+    output_scale = np.float32(activation_scale * np.float32(weight_scale))
+    return np.asarray(accumulator, dtype=np.float32) * output_scale
+
+
 def _quantized_projection(
     hidden: np.ndarray,
     weight_q: np.ndarray,
     weight_scale: np.float32,
-    weight_zero_point: np.int8,
+    weight_zero_point: np.generic | int,
     bias: np.ndarray,
 ) -> np.ndarray:
-    """Reproduce the ONNX DynamicQuantizeLinear/MatMulInteger projection."""
-    hidden_q, hidden_scale, hidden_zero_point = _dynamic_quantize_uint8(hidden)
-    left = hidden_q.astype(np.int32) - np.int32(hidden_zero_point)
-    right = np.asarray(weight_q, dtype=np.int32) - np.int32(weight_zero_point)
-    integer_product = left @ right
-    output_scale = np.float32(hidden_scale * weight_scale)
-    return np.asarray(integer_product, dtype=np.float32) * output_scale + bias
+    return _quantized_matmul_from_activation(hidden, weight_q, weight_scale, weight_zero_point) + bias
 
 
 def _sigmoid(value: np.ndarray) -> np.ndarray:
-    clipped = np.clip(value, -80.0, 80.0)
+    clipped = np.clip(value, -20.0, 20.0)
     return 1.0 / (1.0 + np.exp(-clipped))
 
 
@@ -90,37 +97,50 @@ def _combined_bias(bias: np.ndarray) -> np.ndarray:
 
 def _lstm_direction(
     inputs: np.ndarray,
-    input_weights: np.ndarray,
-    recurrent_weights: np.ndarray,
+    input_weight_q: np.ndarray,
+    input_weight_scale: np.float32,
+    input_weight_zero_point: np.generic | int,
+    recurrent_weight_q: np.ndarray,
+    recurrent_weight_scale: np.float32,
+    recurrent_weight_zero_point: np.generic | int,
     bias: np.ndarray,
     *,
     reverse: bool,
 ) -> np.ndarray:
-    """Run one ONNX-layout LSTM direction for a single sequence.
+    """Run one DynamicQuantizeLSTM direction for a single sequence.
 
-    DKSplit's dynamically-quantized ONNX graph stores the optimized matrices
-    transposed relative to the standard ONNX tensor description: [input, 4H]
-    and [H, 4H]. Gate chunks are ONNX IOFC order.
+    ONNX Runtime quantizes the full input matrix once for X@W, then quantizes
+    the previous hidden state independently for every H@R recurrence. DKSplit's
+    optimized weights are laid out [input, 4H] and [H, 4H], in IOFC gate order.
     """
     seq_len = inputs.shape[0]
     output = np.empty((seq_len, HIDDEN_SIZE), dtype=np.float32)
     hidden = np.zeros(HIDDEN_SIZE, dtype=np.float32)
     cell = np.zeros(HIDDEN_SIZE, dtype=np.float32)
 
-    # The input contribution is independent of recurrent state; doing it in
-    # one GEMM substantially reduces Python/BLAS call overhead.
-    input_gates = inputs @ input_weights + bias
+    input_gates = _quantized_matmul_from_activation(
+        inputs,
+        input_weight_q,
+        input_weight_scale,
+        input_weight_zero_point,
+    )
     time_indices = range(seq_len - 1, -1, -1) if reverse else range(seq_len)
 
     for time_index in time_indices:
-        gates = input_gates[time_index] + hidden @ recurrent_weights
+        recurrent_gates = _quantized_matmul_from_activation(
+            hidden.reshape(1, -1),
+            recurrent_weight_q,
+            recurrent_weight_scale,
+            recurrent_weight_zero_point,
+        )[0]
+        gates = input_gates[time_index] + recurrent_gates + bias
         input_gate, output_gate, forget_gate, cell_gate = np.split(gates, 4)
         input_gate = _sigmoid(input_gate)
         output_gate = _sigmoid(output_gate)
         forget_gate = _sigmoid(forget_gate)
-        cell_gate = np.tanh(cell_gate)
+        cell_gate = np.tanh(np.clip(cell_gate, -10.0, 10.0))
         cell = forget_gate * cell + input_gate * cell_gate
-        hidden = output_gate * np.tanh(cell)
+        hidden = output_gate * np.tanh(np.clip(cell, -10.0, 10.0))
         output[time_index] = hidden
 
     return output
@@ -128,21 +148,33 @@ def _lstm_direction(
 
 def _bilstm_layer(
     inputs: np.ndarray,
-    input_weights: np.ndarray,
-    recurrent_weights: np.ndarray,
+    input_weight_q: np.ndarray,
+    input_weight_scale: np.ndarray,
+    input_weight_zero_point: np.ndarray,
+    recurrent_weight_q: np.ndarray,
+    recurrent_weight_scale: np.ndarray,
+    recurrent_weight_zero_point: np.ndarray,
     bias: np.ndarray,
 ) -> np.ndarray:
     forward = _lstm_direction(
         inputs,
-        input_weights[0],
-        recurrent_weights[0],
+        input_weight_q[0],
+        np.float32(input_weight_scale[0]),
+        input_weight_zero_point[0],
+        recurrent_weight_q[0],
+        np.float32(recurrent_weight_scale[0]),
+        recurrent_weight_zero_point[0],
         bias[0],
         reverse=False,
     )
     backward = _lstm_direction(
         inputs,
-        input_weights[1],
-        recurrent_weights[1],
+        input_weight_q[1],
+        np.float32(input_weight_scale[1]),
+        input_weight_zero_point[1],
+        recurrent_weight_q[1],
+        np.float32(recurrent_weight_scale[1]),
+        recurrent_weight_zero_point[1],
         bias[1],
         reverse=True,
     )
@@ -202,16 +234,23 @@ class NumpyDKSplit:
                 raise ValueError(f"unsupported converted model format: {version}")
 
             self.embedding = _dequantize(data["embedding_q"], data["embedding_scale"], data["embedding_zp"])
-            self.layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+            self.layers: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
             for layer in range(NUM_LAYERS):
-                w = _dequantize(data[f"l{layer}_w_q"], data[f"l{layer}_w_scale"], data[f"l{layer}_w_zp"])
-                r = _dequantize(data[f"l{layer}_r_q"], data[f"l{layer}_r_scale"], data[f"l{layer}_r_zp"])
-                b = _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32))
-                self.layers.append((w, r, b))
+                self.layers.append(
+                    (
+                        np.asarray(data[f"l{layer}_w_q"]),
+                        np.asarray(data[f"l{layer}_w_scale"], dtype=np.float32),
+                        np.asarray(data[f"l{layer}_w_zp"]),
+                        np.asarray(data[f"l{layer}_r_q"]),
+                        np.asarray(data[f"l{layer}_r_scale"], dtype=np.float32),
+                        np.asarray(data[f"l{layer}_r_zp"]),
+                        _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32)),
+                    )
+                )
 
-            self.projection_q = np.asarray(data["projection_q"], dtype=np.int8)
+            self.projection_q = np.asarray(data["projection_q"])
             self.projection_scale = np.float32(data["projection_scale"])
-            self.projection_zp = np.int8(data["projection_zp"])
+            self.projection_zp = np.asarray(data["projection_zp"]).item()
             self.projection_bias = np.asarray(data["projection_bias"], dtype=np.float32)
             self.transitions = np.asarray(data["crf_transitions"], dtype=np.float32)
             self.start_transitions = np.asarray(data["crf_start_transitions"], dtype=np.float32)
@@ -223,13 +262,13 @@ class NumpyDKSplit:
             raise ValueError(f"unexpected projection shape: {self.projection_q.shape}")
 
     def emissions_from_ids(self, char_ids: np.ndarray) -> np.ndarray:
-        """Return float32 emission scores for one character-ID sequence."""
+        """Return emission scores for one character-ID sequence."""
         ids = np.asarray(char_ids, dtype=np.int64)
         if ids.ndim != 1:
             raise ValueError("char_ids must be one-dimensional")
         hidden = np.asarray(self.embedding[ids], dtype=np.float32)
-        for input_weights, recurrent_weights, bias in self.layers:
-            hidden = _bilstm_layer(hidden, input_weights, recurrent_weights, bias)
+        for layer in self.layers:
+            hidden = _bilstm_layer(hidden, *layer)
         return np.asarray(
             _quantized_projection(
                 hidden,

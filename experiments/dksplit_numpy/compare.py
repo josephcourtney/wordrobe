@@ -1,4 +1,4 @@
-"""Compare the exploratory NumPy DKSplit implementation with real ONNX Runtime."""
+"""Compare both exploratory NumPy DKSplit backends with real ONNX Runtime."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import argparse
 import random
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import dksplit
 import numpy as np
@@ -14,6 +16,7 @@ from dksplit.split import Splitter, _crf_decode as reference_crf_decode
 from dksplit.split import _decode_predictions_batch, _text_to_ids_fast
 
 from convert import convert_model
+from float_model import FloatNumpyDKSplit
 from model import MAX_LEN, NumpyDKSplit, _crf_decode, _decode_words, text_to_ids
 
 REPRESENTATIVE_INPUTS = [
@@ -52,6 +55,48 @@ REPRESENTATIVE_INPUTS = [
 ]
 
 
+class _NumpyModel(Protocol):
+    transitions: np.ndarray
+    start_transitions: np.ndarray
+    end_transitions: np.ndarray
+
+    def emissions(self, text: str) -> np.ndarray: ...
+
+
+@dataclass
+class _Metrics:
+    max_abs_error: float = 0.0
+    sum_abs_error: float = 0.0
+    emission_values: int = 0
+    segment_matches: int = 0
+    representative_matches: int = 0
+    random_matches: int = 0
+    seconds: float = 0.0
+    divergences: list[tuple[str, list[str], list[str], float]] = field(default_factory=list)
+
+    def record(
+        self,
+        *,
+        text: str,
+        reference_words: list[str],
+        actual_words: list[str],
+        difference: np.ndarray,
+        representative: bool,
+    ) -> None:
+        sample_max = float(np.max(difference)) if difference.size else 0.0
+        self.max_abs_error = max(self.max_abs_error, sample_max)
+        self.sum_abs_error += float(np.sum(difference))
+        self.emission_values += difference.size
+        if reference_words == actual_words:
+            self.segment_matches += 1
+            if representative:
+                self.representative_matches += 1
+            else:
+                self.random_matches += 1
+        elif len(self.divergences) < 12:
+            self.divergences.append((text, reference_words, actual_words, sample_max))
+
+
 def _random_inputs(count: int, seed: int) -> list[str]:
     rng = random.Random(seed)
     alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.@"
@@ -84,10 +129,35 @@ def _reference_words(splitter: Splitter, text: str, emissions: np.ndarray) -> li
     return _decode_predictions_batch([processed], labels)[0]
 
 
-def _numpy_words(model: NumpyDKSplit, text: str, emissions: np.ndarray) -> list[str]:
+def _numpy_words(model: _NumpyModel, text: str, emissions: np.ndarray) -> list[str]:
     processed = text.lower()[:MAX_LEN]
     labels = _crf_decode(emissions, model.transitions, model.start_transitions, model.end_transitions)
     return _decode_words(processed, labels)
+
+
+def _print_metrics(
+    name: str,
+    metrics: _Metrics,
+    *,
+    total: int,
+    representative_count: int,
+    random_count: int,
+) -> None:
+    mean_abs_error = metrics.sum_abs_error / metrics.emission_values if metrics.emission_values else 0.0
+    print(f"{name}_max_abs_emission_error={metrics.max_abs_error:.9g}")
+    print(f"{name}_mean_abs_emission_error={mean_abs_error:.9g}")
+    print(f"{name}_segmentation_matches={metrics.segment_matches}")
+    print(f"{name}_segmentation_parity={metrics.segment_matches / total:.6%}")
+    print(f"{name}_representative_matches={metrics.representative_matches}")
+    print(f"{name}_representative_parity={metrics.representative_matches / representative_count:.6%}")
+    if random_count:
+        print(f"{name}_random_matches={metrics.random_matches}")
+        print(f"{name}_random_parity={metrics.random_matches / random_count:.6%}")
+    print(f"{name}_seconds={metrics.seconds:.6f}")
+    if metrics.divergences:
+        print(f"{name}_divergences:")
+        for text, expected, actual, error in metrics.divergences:
+            print(f"  {text!r}: onnx={expected!r} numpy={actual!r} max_abs_error={error:.9g}")
 
 
 def compare(random_count: int, seed: int) -> int:
@@ -98,19 +168,15 @@ def compare(random_count: int, seed: int) -> int:
         print(f"onnx_bytes={onnx_path.stat().st_size}")
         print(f"converted_bytes={converted_path.stat().st_size}")
 
-        numpy_model = NumpyDKSplit(converted_path)
         reference = Splitter(model_path=str(onnx_path), crf_path=str(crf_path), num_threads=1)
+        models: list[tuple[str, _NumpyModel]] = [
+            ("float32", FloatNumpyDKSplit(converted_path)),
+            ("quantized", NumpyDKSplit(converted_path)),
+        ]
+        metrics = {name: _Metrics() for name, _model in models}
 
         representative_count = len(REPRESENTATIVE_INPUTS)
         texts = REPRESENTATIVE_INPUTS + _random_inputs(random_count, seed)
-        max_abs_error = 0.0
-        sum_abs_error = 0.0
-        emission_values = 0
-        segment_matches = 0
-        representative_matches = 0
-        random_matches = 0
-        divergences: list[tuple[str, list[str], list[str], float]] = []
-        numpy_seconds = 0.0
         onnx_seconds = 0.0
 
         for index, text in enumerate(texts):
@@ -122,53 +188,40 @@ def compare(random_count: int, seed: int) -> int:
             started = time.perf_counter()
             ref_emissions = _reference_emissions(reference, text)
             onnx_seconds += time.perf_counter() - started
-
-            started = time.perf_counter()
-            np_emissions = numpy_model.emissions(text)
-            numpy_seconds += time.perf_counter() - started
-
-            if ref_emissions.shape != np_emissions.shape:
-                raise AssertionError(
-                    f"emission shape mismatch for {text!r}: {ref_emissions.shape} != {np_emissions.shape}"
-                )
-            difference = np.abs(ref_emissions - np_emissions)
-            sample_max = float(np.max(difference)) if difference.size else 0.0
-            max_abs_error = max(max_abs_error, sample_max)
-            sum_abs_error += float(np.sum(difference))
-            emission_values += difference.size
-
             reference_words = _reference_words(reference, text, ref_emissions)
-            numpy_words = _numpy_words(numpy_model, text, np_emissions)
-            if reference_words == numpy_words:
-                segment_matches += 1
-                if index < representative_count:
-                    representative_matches += 1
-                else:
-                    random_matches += 1
-            elif len(divergences) < 12:
-                divergences.append((text, reference_words, numpy_words, sample_max))
+
+            for name, model in models:
+                started = time.perf_counter()
+                np_emissions = model.emissions(text)
+                metrics[name].seconds += time.perf_counter() - started
+                if ref_emissions.shape != np_emissions.shape:
+                    raise AssertionError(
+                        f"{name} emission shape mismatch for {text!r}: "
+                        f"{ref_emissions.shape} != {np_emissions.shape}"
+                    )
+                difference = np.abs(ref_emissions - np_emissions)
+                actual_words = _numpy_words(model, text, np_emissions)
+                metrics[name].record(
+                    text=text,
+                    reference_words=reference_words,
+                    actual_words=actual_words,
+                    difference=difference,
+                    representative=index < representative_count,
+                )
 
         total = len(texts)
-        mean_abs_error = sum_abs_error / emission_values if emission_values else 0.0
         print(f"samples={total}")
         print(f"representative_samples={representative_count}")
         print(f"random_samples={random_count}")
-        print(f"emission_values={emission_values}")
-        print(f"max_abs_emission_error={max_abs_error:.9g}")
-        print(f"mean_abs_emission_error={mean_abs_error:.9g}")
-        print(f"segmentation_matches={segment_matches}")
-        print(f"segmentation_parity={segment_matches / total:.6%}")
-        print(f"representative_matches={representative_matches}")
-        print(f"representative_parity={representative_matches / representative_count:.6%}")
-        if random_count:
-            print(f"random_matches={random_matches}")
-            print(f"random_parity={random_matches / random_count:.6%}")
         print(f"onnx_seconds={onnx_seconds:.6f}")
-        print(f"numpy_seconds={numpy_seconds:.6f}")
-        if divergences:
-            print("divergences:")
-            for text, expected, actual, error in divergences:
-                print(f"  {text!r}: onnx={expected!r} numpy={actual!r} max_abs_error={error:.9g}")
+        for name, _model in models:
+            _print_metrics(
+                name,
+                metrics[name],
+                total=total,
+                representative_count=representative_count,
+                random_count=random_count,
+            )
         return 0
 
 

@@ -84,6 +84,132 @@ def test_implicit_boundary_penalty_avoids_article_oversegmentation(tmp_path) -> 
     assert segmenter.segment("findacme") == ["find", "acme"]
 
 
+@pytest.mark.parametrize(
+    ("text", "expected", "extra_words"),
+    [
+        pytest.param("thisisatest", {("this", "is", "a", "test")}, {}, id="common-words"),
+        pytest.param("isthisacamel", {("is", "this", "a", "camel")}, {}, id="article-oov"),
+        pytest.param("isthisasnorql", {("is", "this", "a", "snorql")}, {}, id="article-vs-known-prefix"),
+        pytest.param("thisisaxyzzy", {("this", "is", "a", "xyzzy")}, {}, id="article-arbitrary-oov"),
+        pytest.param("findacme", {("find", "acme")}, {"find": 1.0}, id="avoid-false-article"),
+        pytest.param("openai", {("openai",)}, {}, id="identifier-cohesion"),
+        pytest.param("scroot", {("scroot",)}, {}, id="avoid-short-prefix-shredding"),
+        pytest.param("loadfrobnicate", {("load", "frobnicate")}, {"load": 1.0}, id="known-prefix-oov"),
+        pytest.param("frobnicatefile", {("frobnicate", "file")}, {"file": 1.0}, id="oov-known-suffix"),
+        pytest.param(
+            "parsexyzzyresponse",
+            {("parse", "xyzzy", "response")},
+            {"parse": 1.0, "response": 1.0},
+            id="oov-between-known-words",
+        ),
+        pytest.param(
+            "nowhere",
+            {("nowhere",)},
+            {},
+            id="lexicalized-no-where",
+            marks=pytest.mark.xfail(reason="fallback vocabulary lacks lexicalized whole word"),
+        ),
+        pytest.param(
+            "somewhere",
+            {("somewhere",)},
+            {},
+            id="lexicalized-some-where",
+            marks=pytest.mark.xfail(reason="fallback vocabulary lacks lexicalized whole word"),
+        ),
+        pytest.param("already", {("already",)}, {}, id="lexicalized-all-ready"),
+        pytest.param("together", {("together",)}, {}, id="lexicalized-to-get-her"),
+        pytest.param(
+            "therefore",
+            {("therefore",)},
+            {},
+            id="lexicalized-there-for",
+            marks=pytest.mark.xfail(reason="fallback vocabulary lacks lexicalized whole word"),
+        ),
+        pytest.param("someone", {("someone",)}, {}, id="lexicalized-some-one"),
+        pytest.param("without", {("without",)}, {}, id="lexicalized-with-out"),
+        pytest.param("within", {("within",)}, {}, id="lexicalized-with-in"),
+        pytest.param("theresult", {("the", "result")}, {}, id="the-result"),
+        pytest.param("thereisnoway", {("there", "is", "no", "way")}, {}, id="overlapping-common-words"),
+        pytest.param(
+            "htmlparser",
+            {("html", "parser")},
+            {"html": 1.0, "parser": 1.0},
+            id="acronym-known-word",
+        ),
+        pytest.param(
+            "xmlhttprequest",
+            {("xml", "http", "request")},
+            {"xml": 1.0, "http": 1.0, "request": 1.0},
+            id="adjacent-acronyms",
+        ),
+        pytest.param(
+            "ipv6address",
+            {("ipv6", "address")},
+            {"ipv6": 1.0, "address": 1.0},
+            id="alphanumeric-domain-token",
+        ),
+        pytest.param(
+            "sha256sum",
+            {("sha256", "sum")},
+            {"sha256": 1.0, "sum": 1.0},
+            id="alphanumeric-hash-token",
+        ),
+        pytest.param(
+            "macOSVersion",
+            {("macOS", "Version")},
+            {"macos": 1.0, "version": 1.0},
+            id="internal-brand-capitalization",
+        ),
+        pytest.param(
+            "YouTubePlayer",
+            {("YouTube", "Player")},
+            {"youtube": 1.0, "player": 1.0},
+            id="mixed-case-proper-name",
+        ),
+        pytest.param(
+            "thisisnotable",
+            {("this", "is", "notable"), ("this", "is", "not", "able")},
+            {},
+            id="genuine-semantic-ambiguity",
+        ),
+        pytest.param(
+            "cannot",
+            {("cannot",), ("can", "not")},
+            {},
+            id="lexicalized-or-compositional",
+        ),
+        pytest.param(
+            "therapist",
+            {("therapist",)},
+            {},
+            id="avoid-the-rapist",
+            marks=pytest.mark.xfail(reason="needs stronger lexicalized-word cohesion"),
+        ),
+        pytest.param(
+            "expertsexchange",
+            {("experts", "exchange")},
+            {},
+            id="experts-exchange",
+            marks=pytest.mark.xfail(reason="requires plural/compound lexical evidence"),
+        ),
+        pytest.param(
+            "penisland",
+            {("pen", "island")},
+            {},
+            id="pen-island",
+            marks=pytest.mark.xfail(reason="genuinely difficult lexical boundary ambiguity"),
+        ),
+    ],
+)
+def test_adversarial_segmentation_cases(tmp_path, text, expected, extra_words) -> None:
+    segmenter = WordSegmenter(
+        wordlist=tmp_path / "missing-dictionary",
+        extra_words=extra_words,
+    )
+
+    assert tuple(segmenter.segment(text)) in expected
+
+
 def test_dictionary_only_short_entries_are_weak_evidence(tmp_path) -> None:
     dictionary = tmp_path / "words"
     dictionary.write_text("q\nai\nnor\n", encoding="utf-8")

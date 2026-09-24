@@ -10,10 +10,11 @@ from pathlib import Path
 
 import dksplit
 import numpy as np
-from dksplit.split import Splitter, _text_to_ids_fast
+from dksplit.split import Splitter, _crf_decode as reference_crf_decode
+from dksplit.split import _decode_predictions_batch, _text_to_ids_fast
 
 from convert import convert_model
-from model import MAX_LEN, NumpyDKSplit, text_to_ids
+from model import MAX_LEN, NumpyDKSplit, _crf_decode, _decode_words, text_to_ids
 
 REPRESENTATIVE_INPUTS = [
     "chatgptlogin",
@@ -72,6 +73,23 @@ def _reference_emissions(splitter: Splitter, text: str) -> np.ndarray:
     return np.asarray(splitter.session.run(None, {"chars": ids.reshape(1, -1)})[0][0], dtype=np.float32)
 
 
+def _reference_words(splitter: Splitter, text: str, emissions: np.ndarray) -> list[str]:
+    processed = text.lower()[:MAX_LEN]
+    labels = reference_crf_decode(
+        emissions[None, :, :],
+        splitter.transitions,
+        splitter.start_transitions,
+        splitter.end_transitions,
+    )
+    return _decode_predictions_batch([processed], labels)[0]
+
+
+def _numpy_words(model: NumpyDKSplit, text: str, emissions: np.ndarray) -> list[str]:
+    processed = text.lower()[:MAX_LEN]
+    labels = _crf_decode(emissions, model.transitions, model.start_transitions, model.end_transitions)
+    return _decode_words(processed, labels)
+
+
 def compare(random_count: int, seed: int) -> int:
     onnx_path, crf_path = _model_paths()
     with tempfile.TemporaryDirectory(prefix="dksplit-numpy-") as temp_dir:
@@ -119,8 +137,8 @@ def compare(random_count: int, seed: int) -> int:
             sum_abs_error += float(np.sum(difference))
             emission_values += difference.size
 
-            reference_words = reference.split(text)
-            numpy_words = numpy_model.split(text)
+            reference_words = _reference_words(reference, text, ref_emissions)
+            numpy_words = _numpy_words(numpy_model, text, np_emissions)
             if reference_words == numpy_words:
                 segment_matches += 1
                 if index < representative_count:

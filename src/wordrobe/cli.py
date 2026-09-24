@@ -13,7 +13,6 @@ from wordrobe.case import (
     guess_case,
     is_reversible,
     possible_cases,
-    translate,
 )
 from wordrobe.segment import WordSegmenter
 
@@ -38,28 +37,25 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=2)
 
 
-def _resolve_decode_case(text: str, case: Case | None) -> Case:
-    """Return an explicit case or infer a unique compatible case."""
-    if case is not None:
-        return case
-
-    candidate = guess_case(text, should_raise=True)
-    if candidate is None:
-        msg = "strict case guessing returned no result"
-        raise AssertionError(msg)
-    return candidate
-
-
-def _decode_words(text: str, case: Case) -> list[str]:
-    """Decode strictly when possible, otherwise recover implicit boundaries heuristically."""
-    if is_reversible(case):
+def _recover_words(text: str, case: Case | None = None) -> list[str]:
+    """Recover semantic words using exact boundaries when requested, otherwise all available evidence."""
+    if case is not None and is_reversible(case):
         return decode_case(text, case)
 
-    if case not in possible_cases(text):
+    if case is not None and case not in possible_cases(text):
         msg = f"{text!r} is not canonical {case.value}."
         raise CaseError(msg)
 
     return [word.lower() for word in WordSegmenter().segment(text)]
+
+
+def _echo_words(text: str, case: Case | None = None) -> None:
+    try:
+        words = _recover_words(text, case)
+    except CaseError as exc:
+        _fail(str(exc))
+
+    typer.echo(" ".join(words))
 
 
 @app.callback(invoke_without_command=True)
@@ -83,32 +79,30 @@ def encode_command(
 
 @app.command("decode")
 def decode_command(
-    text: Annotated[str, typer.Argument(help="Text to decode.")],
+    text: Annotated[str, typer.Argument(help="Text to recover component words from.")],
     case: Annotated[
         Case | None,
-        typer.Option("--case", "-c", help="Source case. If omitted, infer a unique compatible case."),
+        typer.Option("--case", "-c", help="Require this source case instead of automatic boundary recovery."),
     ] = None,
 ) -> None:
-    """Decode text into semantic component words, inferring the case by default."""
-    try:
-        source_case = _resolve_decode_case(text, case)
-        words = _decode_words(text, source_case)
-    except CaseError as exc:
-        _fail(str(exc))
-
-    typer.echo(" ".join(words))
+    """Recover semantic component words from text."""
+    _echo_words(text, case)
 
 
 @app.command("convert")
 def convert_command(
-    text: Annotated[str, typer.Argument(help="Canonical text to convert.")],
-    from_case: Annotated[Case, typer.Option("--from", help="Source case.")],
+    text: Annotated[str, typer.Argument(help="Text to convert.")],
     to_case: Annotated[Case, typer.Option("--to", help="Target case.")],
+    from_case: Annotated[
+        Case | None,
+        typer.Option("--from", help="Require this source case instead of automatic boundary recovery."),
+    ] = None,
 ) -> None:
-    """Convert canonical text between case conventions."""
+    """Recover component words and encode them in another case convention."""
     try:
-        value = translate(text, from_case, to_case)
-    except CaseError as exc:
+        words = _recover_words(text, from_case)
+        value = encode_case(words, to_case)
+    except (CaseError, TypeError, ValueError) as exc:
         _fail(str(exc))
 
     typer.echo(value)
@@ -142,11 +136,10 @@ def guess_command(
     typer.echo(candidate.value)
 
 
-@app.command()
-def segment(text: str) -> None:
-    """Heuristically recover word boundaries from text."""
-    segmenter = WordSegmenter()
-    typer.echo(segmenter.segment_string(text))
+@app.command("segment", hidden=True)
+def segment_command(text: Annotated[str, typer.Argument(help="Text to recover component words from.")]) -> None:
+    """Compatibility alias for `decode`."""
+    _echo_words(text)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 """NumPy-only inference for the fixed DKSplit BiLSTM-CRF architecture.
 
 This is an exploratory reimplementation, not part of wordrobe's public API.
-The converted archive contains DKSplit's original quantized weights; they are
-dequantized to float32 once when this model is loaded.  Recurrent arithmetic is
-then ordinary float32 NumPy, so emissions are expected to be close to rather
-than bit-identical with ONNX Runtime's DynamicQuantizeLSTM implementation.
+The converted archive contains DKSplit's original quantized weights. LSTM
+weights are dequantized to float32 once at load time; the final projection
+reproduces ONNX's DynamicQuantizeLinear + MatMulInteger path directly. The
+remaining numerical difference from ONNX Runtime is therefore confined to the
+three DynamicQuantizeLSTM operators.
 """
 
 from __future__ import annotations
@@ -45,6 +46,36 @@ def _dequantize(q: np.ndarray, scale: np.ndarray, zero_point: np.ndarray) -> np.
     return (qf - zp_f.reshape(broadcast_shape)) * scale_f.reshape(broadcast_shape)
 
 
+def _dynamic_quantize_uint8(value: np.ndarray) -> tuple[np.ndarray, np.float32, np.uint8]:
+    """Reproduce ONNX DynamicQuantizeLinear's per-tensor uint8 transform."""
+    x = np.asarray(value, dtype=np.float32)
+    x_min = np.float32(min(0.0, float(np.min(x))))
+    x_max = np.float32(max(0.0, float(np.max(x))))
+    scale = np.float32((x_max - x_min) / 255.0)
+    if scale == 0.0:
+        scale = np.float32(1.0)
+    zero_point_float = np.float32(-x_min / scale)
+    zero_point = np.uint8(np.clip(np.rint(zero_point_float), 0, 255))
+    quantized = np.clip(np.rint(x / scale) + zero_point, 0, 255).astype(np.uint8)
+    return quantized, scale, zero_point
+
+
+def _quantized_projection(
+    hidden: np.ndarray,
+    weight_q: np.ndarray,
+    weight_scale: np.float32,
+    weight_zero_point: np.int8,
+    bias: np.ndarray,
+) -> np.ndarray:
+    """Reproduce the ONNX DynamicQuantizeLinear/MatMulInteger projection."""
+    hidden_q, hidden_scale, hidden_zero_point = _dynamic_quantize_uint8(hidden)
+    left = hidden_q.astype(np.int32) - np.int32(hidden_zero_point)
+    right = np.asarray(weight_q, dtype=np.int32) - np.int32(weight_zero_point)
+    integer_product = left @ right
+    output_scale = np.float32(hidden_scale * weight_scale)
+    return np.asarray(integer_product, dtype=np.float32) * output_scale + bias
+
+
 def _sigmoid(value: np.ndarray) -> np.ndarray:
     clipped = np.clip(value, -80.0, 80.0)
     return 1.0 / (1.0 + np.exp(-clipped))
@@ -69,7 +100,7 @@ def _lstm_direction(
 
     DKSplit's dynamically-quantized ONNX graph stores the optimized matrices
     transposed relative to the standard ONNX tensor description: [input, 4H]
-    and [H, 4H].  Gate chunks are ONNX IOFC order.
+    and [H, 4H]. Gate chunks are ONNX IOFC order.
     """
     seq_len = inputs.shape[0]
     output = np.empty((seq_len, HIDDEN_SIZE), dtype=np.float32)
@@ -178,11 +209,9 @@ class NumpyDKSplit:
                 b = _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32))
                 self.layers.append((w, r, b))
 
-            self.projection_weights = _dequantize(
-                data["projection_q"],
-                data["projection_scale"],
-                data["projection_zp"],
-            )
+            self.projection_q = np.asarray(data["projection_q"], dtype=np.int8)
+            self.projection_scale = np.float32(data["projection_scale"])
+            self.projection_zp = np.int8(data["projection_zp"])
             self.projection_bias = np.asarray(data["projection_bias"], dtype=np.float32)
             self.transitions = np.asarray(data["crf_transitions"], dtype=np.float32)
             self.start_transitions = np.asarray(data["crf_start_transitions"], dtype=np.float32)
@@ -190,8 +219,8 @@ class NumpyDKSplit:
 
         if self.embedding.shape != (38, 384):
             raise ValueError(f"unexpected embedding shape: {self.embedding.shape}")
-        if self.projection_weights.shape != (768, 2):
-            raise ValueError(f"unexpected projection shape: {self.projection_weights.shape}")
+        if self.projection_q.shape != (768, 2):
+            raise ValueError(f"unexpected projection shape: {self.projection_q.shape}")
 
     def emissions_from_ids(self, char_ids: np.ndarray) -> np.ndarray:
         """Return float32 emission scores for one character-ID sequence."""
@@ -201,7 +230,16 @@ class NumpyDKSplit:
         hidden = np.asarray(self.embedding[ids], dtype=np.float32)
         for input_weights, recurrent_weights, bias in self.layers:
             hidden = _bilstm_layer(hidden, input_weights, recurrent_weights, bias)
-        return np.asarray(hidden @ self.projection_weights + self.projection_bias, dtype=np.float32)
+        return np.asarray(
+            _quantized_projection(
+                hidden,
+                self.projection_q,
+                self.projection_scale,
+                self.projection_zp,
+                self.projection_bias,
+            ),
+            dtype=np.float32,
+        )
 
     def emissions(self, text: str) -> np.ndarray:
         """Return emissions after DKSplit-compatible text preprocessing."""

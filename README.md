@@ -2,7 +2,7 @@
 
 > A costume change for words.
 
-`wordrobe` is a small Python utility for recognizing, decoding, and converting common word-casing conventions such as `snake_case`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `camelCase`, and `PascalCase`.
+`wordrobe` is a small Python utility for recognizing, decoding, converting, and heuristically segmenting common word and identifier conventions such as `snake_case`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `camelCase`, and `PascalCase`.
 
 ## Development setup
 
@@ -12,7 +12,7 @@ From a checkout of the repository:
 uv sync
 ```
 
-## Usage
+## Case API
 
 ```python
 from wordrobe import Case, decode, encode, guess_case, possible_cases, translate
@@ -38,6 +38,8 @@ possible_cases("hello")
 # Multiple candidates: a single word does not reveal which case convention produced it.
 ```
 
+Component words are normalized to lowercase before encoding and must be non-empty ASCII alphanumeric strings. This deliberately treats words as semantic components rather than preserving their original capitalization.
+
 ## Reversibility
 
 Delimiter-based cases are decoded strictly and losslessly. Cases such as `camelCase`, `PascalCase`, and `flatcase` can be encoded, but are not decoded by guessing because capitalization does not preserve every possible word boundary.
@@ -46,18 +48,84 @@ Delimiter-based cases are decoded strictly and losslessly. Cases such as `camelC
 
 ## Segmentation
 
-`WordSegmenter` can heuristically recover words from unseparated text. Numeric runs are preserved as their own tokens:
+`WordSegmenter` heuristically recovers words from unseparated or mixed-format text. It uses a small built-in common-word vocabulary, an available system dictionary when present, optional frequency information, and explicit boundary evidence. Numeric runs are preserved as tokens.
 
 ```python
 from wordrobe.segment import WordSegmenter
 
-WordSegmenter().segment("word2number")
+segmenter = WordSegmenter()
+segmenter.segment("word2number")
 # ['word', '2', 'number']
+
+segmenter.segment("parseHTTPResponseBody")
+# Uses case transitions as soft boundary evidence while preserving original spelling.
 ```
+
+Punctuation is treated as a hard boundary. `segment()` returns only tokens; `segment_spans()` provides a lossless representation including separators and source offsets:
+
+```python
+spans = segmenter.segment_spans("load-xstate_statechart")
+"".join(span.text for span in spans)
+# 'load-xstate_statechart'
+```
+
+### Custom vocabulary and scoring
+
+Known project- or domain-specific words can be supplied as a collection using `custom_word_cost`, or as a mapping with explicit costs. Lower costs make a candidate more favorable.
+
+```python
+segmenter = WordSegmenter(
+    extra_words={
+        "scroot": 1.0,
+        "statechart": 2.0,
+    },
+    blocked_words={"root"},
+)
+
+segmenter.segment("scrootstatechart")
+# ['scroot', 'statechart']
+```
+
+`blocked_words` removes otherwise valid candidates from consideration. All explicit custom costs must be finite.
+
+Unknown-word behavior can be customized with a callback:
+
+```python
+def unknown_cost(word: str) -> float:
+    return 2.0 if word.startswith("x") else 20.0
+
+segmenter = WordSegmenter(unknown_cost=unknown_cost)
+```
+
+The callback must return a finite numeric cost. Without one, unknown spans use the configurable `unknown_base_cost` and `unknown_char_cost` heuristic.
+
+### Dictionaries, frequencies, and boundary hints
+
+`wordlist=` selects an explicit dictionary file. If omitted, `WordSegmenter` searches common system wordlist locations. `frequency_file=` accepts either `word frequency` lines or a list ordered from most to least frequent.
+
+Case transitions such as `parseHTTPResponse` and transitions between digits and letters provide soft boundary bonuses. Set `use_case_hints=False` to disable capitalization evidence. `case_boundary_bonus` and `numeric_boundary_bonus` control the strength of these hints.
 
 ## CLI
 
+The command line exposes the same case semantics plus segmentation:
+
 ```bash
-wordrobe --help
+wordrobe encode --case camelCase hello world
+# helloWorld
+
+wordrobe decode --case snake_case hello_world
+# hello world
+
+wordrobe convert --from snake_case --to PascalCase hello_world
+# HelloWorld
+
+wordrobe guess hello_world
+# snake_case
+
+wordrobe guess --all hello
+# prints every compatible case in deterministic preference order
+
 wordrobe segment thisisatest
 ```
+
+`guess` exits with an error for ambiguous or invalid input unless `--all` is requested. `decode` likewise rejects non-reversible cases and noncanonical input rather than heuristically inventing boundaries.

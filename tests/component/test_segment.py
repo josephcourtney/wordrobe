@@ -61,7 +61,10 @@ def test_oov_cohesion_keeps_identifier_like_singleton_sequences_together(tmp_pat
 
 
 def test_oov_cohesion_still_extracts_strong_known_prefixes(tmp_path) -> None:
-    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+    segmenter = WordSegmenter(
+        wordlist=tmp_path / "missing-dictionary",
+        extra_words={"load": 1.0},
+    )
 
     assert segmenter.segment("loadfrobnicate") == ["load", "frobnicate"]
 
@@ -215,15 +218,19 @@ def test_unknown_word_callback_cost_must_be_finite() -> None:
         segmenter.segment("xyzzy")
 
 
-@pytest.mark.parametrize(
-    "option",
-    ["weak_short_word_penalty", "adjacent_singleton_penalty", "article_unknown_bonus"],
-)
-def test_sequence_scoring_options_must_be_finite_and_nonnegative(option: str) -> None:
-    with pytest.raises(ValueError, match=option):
-        WordSegmenter(**{option: float("nan")})
-    with pytest.raises(ValueError, match=option):
-        WordSegmenter(**{option: -1.0})
+def test_sequence_scoring_options_must_be_finite_and_nonnegative() -> None:
+    with pytest.raises(ValueError, match="weak_short_word_penalty"):
+        WordSegmenter(weak_short_word_penalty=float("nan"))
+    with pytest.raises(ValueError, match="weak_short_word_penalty"):
+        WordSegmenter(weak_short_word_penalty=-1.0)
+    with pytest.raises(ValueError, match="adjacent_singleton_penalty"):
+        WordSegmenter(adjacent_singleton_penalty=float("nan"))
+    with pytest.raises(ValueError, match="adjacent_singleton_penalty"):
+        WordSegmenter(adjacent_singleton_penalty=-1.0)
+    with pytest.raises(ValueError, match="article_unknown_bonus"):
+        WordSegmenter(article_unknown_bonus=float("nan"))
+    with pytest.raises(ValueError, match="article_unknown_bonus"):
+        WordSegmenter(article_unknown_bonus=-1.0)
 
 
 def test_segment_spans_preserves_consecutive_punctuation_as_one_separator() -> None:

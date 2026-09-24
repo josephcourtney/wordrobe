@@ -17,7 +17,7 @@ def test_cli_runs_successfully() -> None:
     assert result.exit_code == 0
 
 
-@pytest.mark.parametrize("entrypoint", ["console-script", "module"])
+@pytest.mark.parametrize("entrypoint", ["console-script", "module", "cli-module"])
 def test_installed_entrypoint_runs_successfully(entrypoint: str) -> None:
     if entrypoint == "console-script":
         executable = shutil.which(
@@ -26,8 +26,10 @@ def test_installed_entrypoint_runs_successfully(entrypoint: str) -> None:
         )
         assert executable is not None
         command = [executable]
-    else:
+    elif entrypoint == "module":
         command = [sys.executable, "-m", "wordrobe"]
+    else:
+        command = [sys.executable, "-m", "wordrobe.cli"]
 
     result = subprocess.run(
         command,

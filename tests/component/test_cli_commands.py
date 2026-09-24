@@ -26,6 +26,34 @@ def test_decode_command_prints_component_words() -> None:
     assert result.stdout.strip() == "hello world"
 
 
+def test_decode_command_infers_reversible_case() -> None:
+    result = runner.invoke(app, ["decode", "hello_world"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "hello world"
+
+
+def test_decode_command_infers_camel_case_and_recovers_boundaries() -> None:
+    result = runner.invoke(app, ["decode", "isThisACamel"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "is this a camel"
+
+
+def test_decode_command_can_heuristically_decode_explicit_camel_case() -> None:
+    result = runner.invoke(app, ["decode", "--case", "camelCase", "isThisATest"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "is this a test"
+
+
+def test_decode_command_requires_explicit_case_for_ambiguous_text() -> None:
+    result = runner.invoke(app, ["decode", "hello"])
+
+    assert result.exit_code == 2
+    assert "ambiguous" in result.stderr
+
+
 def test_convert_command_translates_case() -> None:
     result = runner.invoke(
         app,
@@ -70,3 +98,10 @@ def test_decode_command_rejects_noncanonical_text() -> None:
 
     assert result.exit_code == 2
     assert "does not match any supported case" in result.stderr
+
+
+def test_decode_command_rejects_noncanonical_implicit_case() -> None:
+    result = runner.invoke(app, ["decode", "--case", "camelCase", "HelloWorld"])
+
+    assert result.exit_code == 2
+    assert "not canonical camelCase" in result.stderr

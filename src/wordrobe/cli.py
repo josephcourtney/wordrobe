@@ -11,6 +11,7 @@ from wordrobe.case import (
     decode as decode_case,
     encode as encode_case,
     guess_case,
+    is_reversible,
     possible_cases,
     translate,
 )
@@ -37,6 +38,30 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=2)
 
 
+def _resolve_decode_case(text: str, case: Case | None) -> Case:
+    """Return an explicit case or infer a unique compatible case."""
+    if case is not None:
+        return case
+
+    candidate = guess_case(text, should_raise=True)
+    if candidate is None:
+        msg = "strict case guessing returned no result"
+        raise AssertionError(msg)
+    return candidate
+
+
+def _decode_words(text: str, case: Case) -> list[str]:
+    """Decode strictly when possible, otherwise recover implicit boundaries heuristically."""
+    if is_reversible(case):
+        return decode_case(text, case)
+
+    if case not in possible_cases(text):
+        msg = f"{text!r} is not canonical {case.value}."
+        raise CaseError(msg)
+
+    return [word.lower() for word in WordSegmenter().segment(text)]
+
+
 @app.callback(invoke_without_command=True)
 def main() -> None:
     """Wordrobe."""
@@ -58,12 +83,16 @@ def encode_command(
 
 @app.command("decode")
 def decode_command(
-    text: Annotated[str, typer.Argument(help="Canonical text to decode.")],
-    case: Annotated[Case, typer.Option("--case", "-c", help="Source case.")],
+    text: Annotated[str, typer.Argument(help="Text to decode.")],
+    case: Annotated[
+        Case | None,
+        typer.Option("--case", "-c", help="Source case. If omitted, infer a unique compatible case."),
+    ] = None,
 ) -> None:
-    """Decode canonical text from a reversible case convention."""
+    """Decode text into semantic component words, inferring the case by default."""
     try:
-        words = decode_case(text, case)
+        source_case = _resolve_decode_case(text, case)
+        words = _decode_words(text, source_case)
     except CaseError as exc:
         _fail(str(exc))
 

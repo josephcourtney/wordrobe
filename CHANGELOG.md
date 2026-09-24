@@ -17,7 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `wordrobe decode` now performs general word recovery when `--case` is omitted instead of requiring a unique case classification first.
 - `wordrobe convert` now performs the same automatic source-word recovery when `--from` is omitted.
 - `wordrobe segment` is retained as a hidden compatibility alias for `wordrobe decode` rather than exposing a separate recovery policy.
-- Unknown-word Viterbi costs now grow linearly with token length and penalize very short unknown fragments, preventing long unseparated strings from winning merely because they were treated as one unknown token.
+- Unknown-word Viterbi costs now use a calibrated linear character cost plus an explicit short-fragment penalty, allowing common short words to split from unknown neighbors without routinely fragmenting technical identifiers.
 - Ranked fallback vocabulary duplicates now retain their earliest (best) rank.
 - Unknown candidates may use the configured `max_word_length` even when the loaded dictionary contains only shorter words.
 - CLI subcommand option parsing now delegates options to the selected subcommand instead of treating them as root options.

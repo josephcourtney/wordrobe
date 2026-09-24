@@ -75,7 +75,7 @@ spans = segmenter.segment_spans("load-xstate_statechart")
 
 ### Scoring
 
-Known words receive frequency/rank-derived costs. Unknown candidates use a base penalty plus a **linear per-character cost**, so concatenating several words into one long unknown token does not become artificially cheap. Very short unknown fragments receive a small additional penalty to reduce artifacts such as splitting an unknown word into a known prefix plus a stray letter.
+Known words receive frequency/rank-derived costs. Unknown candidates use a base penalty plus a **linear per-character cost**, so concatenating several words into one long unknown token does not become artificially cheap. One- and two-character unknown fragments receive an additional penalty so the model can extract common short words without routinely breaking technical identifiers around known prefixes or suffixes.
 
 `unknown_base_cost` and `unknown_char_cost` tune the default unknown model. A custom callback can replace it entirely:
 

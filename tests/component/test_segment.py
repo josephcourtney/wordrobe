@@ -45,8 +45,20 @@ def test_viterbi_splits_unseparated_common_words_without_system_dictionary(tmp_p
 def test_default_unknown_cost_grows_linearly_with_length(tmp_path) -> None:
     segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
 
-    assert segmenter.word_cost("qzxvbnm") == pytest.approx(12.0 + 2.0 * 7)
-    assert segmenter.word_cost("q") == pytest.approx(12.0 + 2.0 + 2.0)
+    assert segmenter.word_cost("qzxvbnm") == pytest.approx(12.0 + 4.0 * 7)
+    assert segmenter.word_cost("q") == pytest.approx(12.0 + 4.0 + 20.0)
+
+
+def test_common_short_word_can_split_from_unknown_remainder(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+
+    assert segmenter.segment("aqzxvbnm") == ["a", "qzxvbnm"]
+
+
+def test_short_unknown_fragment_penalty_avoids_known_suffix_oversegmentation(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+
+    assert segmenter.segment("scroot") == ["scroot"]
 
 
 def test_long_unknown_candidate_is_not_limited_by_dictionary_word_length(tmp_path) -> None:

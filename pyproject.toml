@@ -36,6 +36,9 @@
     "vulture>=2.14",
   ]
 
+[tool.pytest.ini_options]
+  pythonpath = ["src"]
+
 [tool.ruff]
   extend = "./ruff.default.toml"
 

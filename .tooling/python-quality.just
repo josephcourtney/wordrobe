@@ -55,8 +55,6 @@ _sync_environment:
   fingerprint() {
     {
       printf '%s\n' "uv-sync-arg=$sync_arg"
-      printf '%s\n' "source-package-layout"
-      find "{{PY_SRC}}" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | LC_ALL=C sort || true
       for file in pyproject.toml uv.lock uv.toml .python-version; do
         [[ ! -f "$file" ]] || cat "$file"
       done
@@ -73,9 +71,9 @@ _sync_environment:
   fi
 
   if [ -n "$sync_arg" ]; then
-    {{UV}} sync "$sync_arg" --reinstall-package "{{PYTHON_PACKAGE}}"
+    {{UV}} sync "$sync_arg"
   else
-    {{UV}} sync --reinstall-package "{{PYTHON_PACKAGE}}"
+    {{UV}} sync
   fi
   mkdir -p .venv
   fingerprint > "$stamp"

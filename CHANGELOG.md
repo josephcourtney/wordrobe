@@ -8,7 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- CLI commands for case encoding, strict decoding, case conversion, and case recognition.
+- CLI commands for case encoding, decoding, case conversion, and case recognition.
+- `wordrobe decode` now infers a unique compatible case when `--case` is omitted.
+- CLI decoding of implicit-boundary cases such as `camelCase` and `PascalCase` uses heuristic word segmentation while preserving strict decoding for reversible cases.
 - `wordrobe guess --all` for deterministic enumeration of compatible case conventions.
 - Documentation for custom segmentation vocabulary, blocked words, unknown-word scoring, frequency files, and lossless spans.
 

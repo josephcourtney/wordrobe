@@ -3,8 +3,9 @@
 This is an exploratory reimplementation, not part of wordrobe's public API.
 The runtime consumes DKSplit's original INT8 weights and reproduces the
 activation quantization used by ONNX Runtime's DynamicQuantizeLSTM and final
-DynamicQuantizeLinear/MatMulInteger projection. ONNX is needed only by the
-one-time converter and parity harness, not by this inference module.
+DynamicQuantizeLinear/MatMulInteger projection. The LSTM nonlinearities use
+NumPy ports of ONNX Runtime MLAS's logistic and tanh rational approximations.
+ONNX is needed only by the one-time converter and parity harness.
 """
 
 from __future__ import annotations
@@ -22,6 +23,32 @@ NUM_LAYERS = 3
 NUM_DIRECTIONS = 2
 NUM_TAGS = 2
 FORMAT_VERSION = 1
+
+# MLAS logistic coefficients, copied from ONNX Runtime's logistic.cpp.
+_LOGISTIC_ALPHA_9 = np.float32(4.37031012579801e-11)
+_LOGISTIC_ALPHA_7 = np.float32(1.15627324459942e-07)
+_LOGISTIC_ALPHA_5 = np.float32(6.08574864600143e-05)
+_LOGISTIC_ALPHA_3 = np.float32(8.51377133304701e-03)
+_LOGISTIC_ALPHA_1 = np.float32(2.48287947061529e-01)
+_LOGISTIC_BETA_10 = np.float32(6.10247389755681e-13)
+_LOGISTIC_BETA_8 = np.float32(5.76102136993427e-09)
+_LOGISTIC_BETA_6 = np.float32(6.29106785017040e-06)
+_LOGISTIC_BETA_4 = np.float32(1.70198817374094e-03)
+_LOGISTIC_BETA_2 = np.float32(1.16817656904453e-01)
+_LOGISTIC_BETA_0 = np.float32(9.93151921023180e-01)
+
+# MLAS tanh coefficients, copied from ONNX Runtime's tanh.cpp.
+_TANH_ALPHA_13 = np.float32(-2.76076847742355e-16)
+_TANH_ALPHA_11 = np.float32(2.00018790482477e-13)
+_TANH_ALPHA_9 = np.float32(-8.60467152213735e-11)
+_TANH_ALPHA_7 = np.float32(5.12229709037114e-08)
+_TANH_ALPHA_5 = np.float32(1.48572235717979e-05)
+_TANH_ALPHA_3 = np.float32(6.37261928875436e-04)
+_TANH_ALPHA_1 = np.float32(4.89352455891786e-03)
+_TANH_BETA_6 = np.float32(1.19825839466702e-06)
+_TANH_BETA_4 = np.float32(1.18534705686654e-04)
+_TANH_BETA_2 = np.float32(2.26843463243900e-03)
+_TANH_BETA_0 = np.float32(4.89352518554385e-03)
 
 _CHAR_MAP = np.full(128, UNK_IDX, dtype=np.int64)
 for _index, _char in enumerate(CHAR_VOCAB, start=2):
@@ -83,9 +110,38 @@ def _quantized_projection(
     return _quantized_matmul_from_activation(hidden, weight_q, weight_scale, weight_zero_point) + bias
 
 
-def _sigmoid(value: np.ndarray) -> np.ndarray:
-    clipped = np.clip(value, -20.0, 20.0)
-    return 1.0 / (1.0 + np.exp(-clipped))
+def _mlas_logistic(value: np.ndarray) -> np.ndarray:
+    """Port MLAS's clamped rational logistic approximation."""
+    x = np.clip(np.asarray(value, dtype=np.float32), np.float32(-18.0), np.float32(18.0))
+    x2 = x * x
+    p = x2 * _LOGISTIC_ALPHA_9 + _LOGISTIC_ALPHA_7
+    p = p * x2 + _LOGISTIC_ALPHA_5
+    p = p * x2 + _LOGISTIC_ALPHA_3
+    p = p * x2 + _LOGISTIC_ALPHA_1
+    p = p * x
+    q = x2 * _LOGISTIC_BETA_10 + _LOGISTIC_BETA_8
+    q = q * x2 + _LOGISTIC_BETA_6
+    q = q * x2 + _LOGISTIC_BETA_4
+    q = q * x2 + _LOGISTIC_BETA_2
+    q = q * x2 + _LOGISTIC_BETA_0
+    return np.clip(p / q + np.float32(0.5), np.float32(0.0), np.float32(1.0))
+
+
+def _mlas_tanh(value: np.ndarray) -> np.ndarray:
+    """Port MLAS's clamped rational tanh approximation."""
+    x = np.clip(np.asarray(value, dtype=np.float32), np.float32(-9.0), np.float32(9.0))
+    x2 = x * x
+    p = x2 * _TANH_ALPHA_13 + _TANH_ALPHA_11
+    p = p * x2 + _TANH_ALPHA_9
+    p = p * x2 + _TANH_ALPHA_7
+    p = p * x2 + _TANH_ALPHA_5
+    p = p * x2 + _TANH_ALPHA_3
+    p = p * x2 + _TANH_ALPHA_1
+    p = p * x
+    q = x2 * _TANH_BETA_6 + _TANH_BETA_4
+    q = q * x2 + _TANH_BETA_2
+    q = q * x2 + _TANH_BETA_0
+    return p / q
 
 
 def _combined_bias(bias: np.ndarray) -> np.ndarray:
@@ -135,12 +191,12 @@ def _lstm_direction(
         )[0]
         gates = input_gates[time_index] + recurrent_gates + bias
         input_gate, output_gate, forget_gate, cell_gate = np.split(gates, 4)
-        input_gate = _sigmoid(input_gate)
-        output_gate = _sigmoid(output_gate)
-        forget_gate = _sigmoid(forget_gate)
-        cell_gate = np.tanh(np.clip(cell_gate, -10.0, 10.0))
+        input_gate = _mlas_logistic(input_gate)
+        output_gate = _mlas_logistic(output_gate)
+        forget_gate = _mlas_logistic(forget_gate)
+        cell_gate = _mlas_tanh(cell_gate)
         cell = forget_gate * cell + input_gate * cell_gate
-        hidden = output_gate * np.tanh(np.clip(cell, -10.0, 10.0))
+        hidden = output_gate * _mlas_tanh(cell)
         output[time_index] = hidden
 
     return output

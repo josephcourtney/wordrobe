@@ -1,0 +1,26 @@
+name: DKSplit NumPy experiment
+
+on:
+  push:
+    branches:
+      - explore/dksplit-numpy
+    paths:
+      - experiments/dksplit_numpy/**
+      - .github/workflows/dksplit-numpy-experiment.yml
+
+jobs:
+  inspect-and-compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install experiment dependencies
+        run: python -m pip install --disable-pip-version-check dksplit==1.0.2 onnx==1.19.0
+
+      - name: Inspect shipped ONNX graph
+        run: python experiments/dksplit_numpy/inspect_onnx.py

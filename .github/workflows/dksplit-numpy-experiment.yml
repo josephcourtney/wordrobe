@@ -29,5 +29,8 @@ jobs:
       - name: Compare both NumPy backends with ONNX Runtime
         run: python experiments/dksplit_numpy/compare.py --random-count 10
 
+      - name: Compare realistic identifier corpus and top-k results
+        run: python experiments/dksplit_numpy/realistic_compare.py
+
       - name: Stress practical float32 backend
         run: python experiments/dksplit_numpy/compare.py --random-count 1000 --skip-quantized

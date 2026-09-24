@@ -42,17 +42,62 @@ def test_viterbi_splits_unseparated_common_words_without_system_dictionary(tmp_p
     assert segmenter.segment("isthisacamel") == ["is", "this", "a", "camel"]
 
 
+def test_oov_cohesion_prefers_article_plus_unknown_noun(tmp_path) -> None:
+    dictionary = tmp_path / "words"
+    dictionary.write_text("nor\nq\nl\n", encoding="utf-8")
+    segmenter = WordSegmenter(wordlist=dictionary)
+
+    assert segmenter.segment("isthisasnorql") == ["is", "this", "a", "snorql"]
+    assert segmenter.segment("thisisaxyzzy") == ["this", "is", "a", "xyzzy"]
+
+
+def test_article_bonus_does_not_split_unknown_at_run_start(tmp_path) -> None:
+    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
+
+    assert segmenter.segment("aqzxvbnm") == ["aqzxvbnm"]
+
+
+def test_oov_cohesion_keeps_identifier_like_singleton_sequences_together(tmp_path) -> None:
+    dictionary = tmp_path / "words"
+    dictionary.write_text("ai\nq\nl\n", encoding="utf-8")
+    segmenter = WordSegmenter(wordlist=dictionary)
+
+    assert segmenter.segment("openai") == ["openai"]
+    assert segmenter.segment("scroot") == ["scroot"]
+
+
+def test_oov_cohesion_still_extracts_strong_known_prefixes(tmp_path) -> None:
+    segmenter = WordSegmenter(
+        wordlist=tmp_path / "missing-dictionary",
+        extra_words={"load": 1.0},
+    )
+
+    assert segmenter.segment("loadfrobnicate") == ["load", "frobnicate"]
+
+
+def test_implicit_boundary_penalty_avoids_article_oversegmentation(tmp_path) -> None:
+    segmenter = WordSegmenter(
+        wordlist=tmp_path / "missing-dictionary",
+        extra_words={"find": 1.0},
+    )
+
+    assert segmenter.segment("findacme") == ["find", "acme"]
+
+
+def test_dictionary_only_short_entries_are_weak_evidence(tmp_path) -> None:
+    dictionary = tmp_path / "words"
+    dictionary.write_text("q\nai\nnor\n", encoding="utf-8")
+    segmenter = WordSegmenter(wordlist=dictionary)
+
+    assert segmenter.word_cost("q") > segmenter.word_cost("nor")
+    assert segmenter.word_cost("ai") > segmenter.word_cost("nor")
+
+
 def test_default_unknown_cost_grows_linearly_with_length(tmp_path) -> None:
     segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
 
     assert segmenter.word_cost("qzxvbnm") == pytest.approx(12.0 + 4.0 * 7)
     assert segmenter.word_cost("q") == pytest.approx(12.0 + 4.0 + 20.0)
-
-
-def test_common_short_word_can_split_from_unknown_remainder(tmp_path) -> None:
-    segmenter = WordSegmenter(wordlist=tmp_path / "missing-dictionary")
-
-    assert segmenter.segment("aqzxvbnm") == ["a", "qzxvbnm"]
 
 
 def test_short_unknown_fragment_penalty_avoids_known_suffix_oversegmentation(tmp_path) -> None:
@@ -180,6 +225,25 @@ def test_unknown_word_callback_cost_must_be_finite() -> None:
 
     with pytest.raises(ValueError, match="unknown-word cost must be finite"):
         segmenter.segment("xyzzy")
+
+
+def test_sequence_scoring_options_must_be_finite_and_nonnegative() -> None:
+    with pytest.raises(ValueError, match="weak_short_word_penalty"):
+        WordSegmenter(weak_short_word_penalty=float("nan"))
+    with pytest.raises(ValueError, match="weak_short_word_penalty"):
+        WordSegmenter(weak_short_word_penalty=-1.0)
+    with pytest.raises(ValueError, match="implicit_boundary_penalty"):
+        WordSegmenter(implicit_boundary_penalty=float("nan"))
+    with pytest.raises(ValueError, match="implicit_boundary_penalty"):
+        WordSegmenter(implicit_boundary_penalty=-1.0)
+    with pytest.raises(ValueError, match="adjacent_singleton_penalty"):
+        WordSegmenter(adjacent_singleton_penalty=float("nan"))
+    with pytest.raises(ValueError, match="adjacent_singleton_penalty"):
+        WordSegmenter(adjacent_singleton_penalty=-1.0)
+    with pytest.raises(ValueError, match="article_unknown_bonus"):
+        WordSegmenter(article_unknown_bonus=float("nan"))
+    with pytest.raises(ValueError, match="article_unknown_bonus"):
+        WordSegmenter(article_unknown_bonus=-1.0)
 
 
 def test_segment_spans_preserves_consecutive_punctuation_as_one_separator() -> None:

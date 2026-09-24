@@ -18,6 +18,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `wordrobe convert` now performs the same automatic source-word recovery when `--from` is omitted.
 - `wordrobe segment` is retained as a hidden compatibility alias for `wordrobe decode` rather than exposing a separate recovery policy.
 - Unknown-word Viterbi costs now use a calibrated linear character cost plus an explicit short-fragment penalty, allowing common short words to split from unknown neighbors without routinely fragmenting technical identifiers.
+- Viterbi segmentation now includes an explicit penalty for unsupported inferred boundaries, minimal local sequence state for adjacent singleton words, and a contextual article-before-OOV bonus, improving outputs such as `is this a snorql` while preserving identifier-like `openai`.
+- One- and two-character entries found only in bare spelling dictionaries are treated as weak evidence so abbreviations and letter entries do not shred OOV tokens.
 - Ranked fallback vocabulary duplicates now retain their earliest (best) rank.
 - Unknown candidates may use the configured `max_word_length` even when the loaded dictionary contains only shorter words.
 - CLI subcommand option parsing now delegates options to the selected subcommand instead of treating them as root options.

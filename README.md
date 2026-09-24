@@ -48,7 +48,7 @@ Delimiter-based cases are decoded strictly and losslessly by the Python `decode(
 
 ## Word recovery
 
-`WordSegmenter` recovers words from unseparated or mixed-format text using minimum-cost dynamic programming over lexical and boundary evidence. It uses a compact built-in ranked vocabulary, an available system dictionary when present, optional frequency information, capitalization and numeric transitions, and configurable unknown-word costs.
+`WordSegmenter` recovers words from unseparated or mixed-format text using minimum-cost dynamic programming over lexical, boundary, and small amounts of local sequence evidence. It uses a compact built-in ranked vocabulary, an available system dictionary when present, optional frequency information, capitalization and numeric transitions, and configurable unknown-word costs.
 
 ```python
 from wordrobe.segment import WordSegmenter
@@ -60,6 +60,12 @@ segmenter.segment("thisisatest")
 
 segmenter.segment("isthisacamel")
 # ['is', 'this', 'a', 'camel']
+
+segmenter.segment("isthisasnorql")
+# ['is', 'this', 'a', 'snorql']
+
+segmenter.segment("openai")
+# ['openai']
 
 segmenter.segment("parseHTTPResponseBody")
 # ['parse', 'HTTP', 'Response', 'Body']
@@ -77,7 +83,16 @@ spans = segmenter.segment_spans("load-xstate_statechart")
 
 Known words receive frequency/rank-derived costs. Unknown candidates use a base penalty plus a **linear per-character cost**, so concatenating several words into one long unknown token does not become artificially cheap. One- and two-character unknown fragments receive an additional penalty so the model can extract common short words without routinely breaking technical identifiers around known prefixes or suffixes.
 
-`unknown_base_cost` and `unknown_char_cost` tune the default unknown model. A custom callback can replace it entirely:
+Every boundary inferred inside one uninterrupted alphanumeric run also receives a modest cohesion penalty. Explicit punctuation creates a hard boundary and does not pay this cost; capitalization and letter/digit transitions provide positive boundary evidence that offsets it. This prevents weak lexical coincidences from creating too many cuts while still allowing strong known words to separate from OOV text.
+
+The Viterbi state carries two small pieces of local context that a scalar token cost cannot express:
+
+- consecutive implicit one-letter words are penalized, which keeps identifier-like forms such as `openai` together instead of producing `open a i`;
+- an article (`a`, `an`, `the`) that occurs after already recovered context receives a modest bonus before an unknown word, allowing `is this a snorql` to beat `is this as norql` without encouraging a completely unknown identifier to be split merely because it starts with an article string.
+
+Bare spelling dictionaries are treated as weaker evidence than ranked or frequency-backed vocabulary. In particular, one- and two-character dictionary-only entries receive a penalty because system dictionaries often contain abbreviations, letters, or symbols such as `q`, `l`, or `ai` that would otherwise fragment an OOV token.
+
+`unknown_base_cost` and `unknown_char_cost` tune the default unknown model. `weak_short_word_penalty`, `implicit_boundary_penalty`, `adjacent_singleton_penalty`, and `article_unknown_bonus` tune the cohesion and local sequence heuristics. A custom callback can replace unknown-word scoring entirely:
 
 ```python
 def unknown_cost(word: str) -> float:
@@ -86,7 +101,7 @@ def unknown_cost(word: str) -> float:
 segmenter = WordSegmenter(unknown_cost=unknown_cost)
 ```
 
-The callback must return a finite numeric cost.
+The callback must return a finite numeric cost. The sequence-scoring penalties and bonus must be finite and non-negative.
 
 ### Custom vocabulary
 
@@ -129,6 +144,9 @@ wordrobe decode isThisACamel
 
 wordrobe decode isthisacamel
 # is this a camel
+
+wordrobe decode isthisasnorql
+# is this a snorql
 
 wordrobe decode --case snake_case hello_world
 # hello world

@@ -1,3 +1,5 @@
+import pytest
+
 from wordrobe.segment import SegmentSpan, WordSegmenter
 
 
@@ -104,3 +106,37 @@ def test_segment_spans_preserves_separators_and_offsets() -> None:
         SegmentSpan("statechart", 12, 22, "token"),
     ]
     assert "".join(span.text for span in spans) == "load-xstate_statechart"
+
+
+def test_empty_input_has_no_segments_or_spans() -> None:
+    segmenter = WordSegmenter()
+
+    assert segmenter.segment("") == []
+    assert segmenter.segment_spans("") == []
+    assert segmenter.segment_string("") == ""
+
+
+@pytest.mark.parametrize("cost", [float("inf"), float("-inf"), float("nan")])
+def test_custom_word_costs_must_be_finite(cost: float) -> None:
+    with pytest.raises(ValueError, match="custom word cost must be finite"):
+        WordSegmenter(extra_words={"scroot": cost})
+
+
+def test_unknown_word_callback_cost_must_be_finite() -> None:
+    segmenter = WordSegmenter(unknown_cost=lambda _word: float("nan"))
+
+    with pytest.raises(ValueError, match="unknown-word cost must be finite"):
+        segmenter.segment("xyzzy")
+
+
+def test_segment_spans_preserves_consecutive_punctuation_as_one_separator() -> None:
+    segmenter = WordSegmenter(extra_words={"foo": 1.0, "bar": 1.0})
+
+    spans = segmenter.segment_spans("foo--bar")
+
+    assert spans == [
+        SegmentSpan("foo", 0, 3, "token"),
+        SegmentSpan("--", 3, 5, "separator"),
+        SegmentSpan("bar", 5, 8, "token"),
+    ]
+    assert "".join(span.text for span in spans) == "foo--bar"

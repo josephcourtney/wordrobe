@@ -75,6 +75,15 @@ def test_oov_cohesion_still_extracts_strong_known_prefixes(tmp_path) -> None:
     assert segmenter.segment("loadfrobnicate") == ["load", "frobnicate"]
 
 
+def test_implicit_boundary_penalty_avoids_article_oversegmentation(tmp_path) -> None:
+    segmenter = WordSegmenter(
+        wordlist=tmp_path / "missing-dictionary",
+        extra_words={"find": 1.0},
+    )
+
+    assert segmenter.segment("findacme") == ["find", "acme"]
+
+
 def test_dictionary_only_short_entries_are_weak_evidence(tmp_path) -> None:
     dictionary = tmp_path / "words"
     dictionary.write_text("q\nai\nnor\n", encoding="utf-8")
@@ -223,6 +232,10 @@ def test_sequence_scoring_options_must_be_finite_and_nonnegative() -> None:
         WordSegmenter(weak_short_word_penalty=float("nan"))
     with pytest.raises(ValueError, match="weak_short_word_penalty"):
         WordSegmenter(weak_short_word_penalty=-1.0)
+    with pytest.raises(ValueError, match="implicit_boundary_penalty"):
+        WordSegmenter(implicit_boundary_penalty=float("nan"))
+    with pytest.raises(ValueError, match="implicit_boundary_penalty"):
+        WordSegmenter(implicit_boundary_penalty=-1.0)
     with pytest.raises(ValueError, match="adjacent_singleton_penalty"):
         WordSegmenter(adjacent_singleton_penalty=float("nan"))
     with pytest.raises(ValueError, match="adjacent_singleton_penalty"):

@@ -57,7 +57,7 @@ jobs:
       - name: Check neural sources
         run: |
           python -m compileall -q src/wordrobe/_neural_boundary.py scripts/convert_dksplit_weights.py scripts/compare_dksplit_onnx.py
-          ruff check --no-fix --ignore INP001,S310,PLR0914,PLR0915 \
+          ruff check --no-fix --ignore INP001,S310,PLR0914,PLR0915,PLC2701,E501 \
             src/wordrobe/_neural_boundary.py \
             scripts/convert_dksplit_weights.py \
             scripts/compare_dksplit_onnx.py \

@@ -41,12 +41,6 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=2)
 
 
-def _version_callback(value: object) -> None:
-    if value:
-        typer.echo(metadata.version)
-        raise typer.Exit
-
-
 def _recover_words(
     text: str,
     from_case: Case | None = None,
@@ -85,15 +79,13 @@ def main(
     *,
     _version: Annotated[
         bool,
-        typer.Option(
-            "--version",
-            callback=_version_callback,
-            is_eager=True,
-            help="Show the Wordrobe version and exit.",
-        ),
+        typer.Option("--version", help="Show the Wordrobe version and exit."),
     ] = False,
 ) -> None:
     """Split, identify, and convert word casing."""
+    if _version:
+        typer.echo(metadata.version)
+        raise typer.Exit(code=0)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 

@@ -1,3 +1,4 @@
+# ruff: noqa: INP001
 """Compare the minimal NumPy DKSplit runtime with the published ONNX model.
 
 This development-only script intentionally owns all ONNX Runtime and DKSplit
@@ -22,9 +23,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from experiments.dksplit_numpy.runtime import MAX_LEN, NumpyDKSplit, text_to_ids  # noqa: E402
+from experiments.dksplit_numpy.runtime import MAX_LEN, NumpyDKSplit, text_to_ids
 
 BENCHMARK_URL = "https://raw.githubusercontent.com/ABTdomain/dksplit/main/benchmark/sample_1000.csv"
+MAX_DIVERGENCES = 20
 
 REPRESENTATIVE_INPUTS = [
     "chatgptlogin",
@@ -75,7 +77,7 @@ def _reference_emissions(splitter: Splitter, text: str) -> np.ndarray:
 
 
 def _load_benchmark(url: str) -> list[dict[str, str]]:
-    with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310 - fixed/default HTTPS source
+    with urllib.request.urlopen(url, timeout=30) as response:
         text = response.read().decode("utf-8")
     return list(csv.DictReader(io.StringIO(text)))
 
@@ -96,9 +98,11 @@ def _run_representative(reference: Splitter, model: NumpyDKSplit) -> None:
         reference_emissions = _reference_emissions(reference, text)
         numpy_emissions = model.emissions(text)
         if reference_emissions.shape != numpy_emissions.shape:
-            raise AssertionError(
-                f"emission shape mismatch for {text!r}: {reference_emissions.shape} != {numpy_emissions.shape}"
+            message = (
+                f"emission shape mismatch for {text!r}: "
+                f"{reference_emissions.shape} != {numpy_emissions.shape}"
             )
+            raise AssertionError(message)
         difference = np.abs(reference_emissions - numpy_emissions)
         max_error = max(max_error, float(np.max(difference)))
         total_error += float(np.sum(difference))
@@ -123,7 +127,7 @@ def _run_representative(reference: Splitter, model: NumpyDKSplit) -> None:
         print(f"representative_divergence={text!r} onnx={expected!r} numpy={actual!r}")
 
 
-def _run_benchmark(reference: Splitter, model: NumpyDKSplit, url: str) -> None:
+def _run_benchmark(reference: Splitter, model: NumpyDKSplit, url: str) -> None:  # noqa: PLR0914, PLR0915
     rows = _load_benchmark(url)
     top1_parity = 0
     top3_order_parity = 0
@@ -189,7 +193,7 @@ def _run_benchmark(reference: Splitter, model: NumpyDKSplit, url: str) -> None:
         reference_only += reference_ok and not numpy_ok
         numpy_only += numpy_ok and not reference_ok
 
-        if reference_top1 != numpy_top1 and len(divergences) < 20:
+        if reference_top1 != numpy_top1 and len(divergences) < MAX_DIVERGENCES:
             divergences.append((text, reference_top1, numpy_top1, acceptable))
 
     count = len(rows)

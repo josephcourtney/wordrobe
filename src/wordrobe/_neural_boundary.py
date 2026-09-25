@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, IO
 
 try:
     import numpy as np
@@ -246,7 +246,7 @@ class NeuralBoundaryModel:
             with Path(model_path).open("rb") as stream:
                 self._load(stream)
 
-    def _load(self, stream: BinaryIO) -> None:
+    def _load(self, stream: IO[bytes]) -> None:
         with np.load(stream) as data:
             version = int(data["format_version"])
             if version != FORMAT_VERSION:

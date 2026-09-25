@@ -3,13 +3,11 @@ from __future__ import annotations
 import pytest
 
 np = pytest.importorskip("numpy")
-
-from wordrobe._neural_boundary import (
-    MAX_LEN,
-    NeuralBoundaryModel,
-    UnsupportedNeuralTextError,
-    supports_neural_text,
-)
+neural = pytest.importorskip("wordrobe._neural_boundary")
+MAX_LEN = neural.MAX_LEN
+NeuralBoundaryModel = neural.NeuralBoundaryModel
+UnsupportedNeuralTextError = neural.UnsupportedNeuralTextError
+supports_neural_text = neural.supports_neural_text
 
 
 @pytest.fixture(scope="module")

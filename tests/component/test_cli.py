@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from wordrobe._meta import metadata
+from wordrobe import __version__
 from wordrobe.cli import app
 
 runner = CliRunner()
@@ -25,7 +25,7 @@ def test_cli_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == metadata.version
+    assert result.stdout.strip() == __version__
 
 
 def test_split_recovers_words() -> None:

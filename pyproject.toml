@@ -48,7 +48,7 @@
 [tool.ruff]
   extend = "./ruff.default.toml"
 
-  [tool.ruff.lint.per-file-ignores]
+  [tool.ruff.lint.extend-per-file-ignores]
     "scripts/compare_dksplit_onnx.py" = [
       "PLC2701", # Reference validator intentionally imports the private stripped runtime.
       "PLR0914", # Benchmark keeps related counters local for side-by-side reporting.

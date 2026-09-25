@@ -121,10 +121,7 @@ def main() -> None:
             stable_failures, xfail_failures = evaluate(weight, wordlist)
             stable_correct = stable_total - len(stable_failures)
             xfail_fixed = xfail_total - len(xfail_failures)
-            print(
-                f"weight={weight:g} stable={stable_correct}/{stable_total} "
-                f"xfail_fixed={xfail_fixed}/{xfail_total}"
-            )
+            print(f"weight={weight:g} stable={stable_correct}/{stable_total} xfail_fixed={xfail_fixed}/{xfail_total}")
             for case, actual in stable_failures:
                 print(f"  REGRESSION {case.text} -> {' '.join(actual)}")
             for case, actual in xfail_failures:

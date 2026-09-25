@@ -29,10 +29,7 @@ def test_incremental_edges_equal_complete_crf_scores() -> None:
     boundaries = (4, 6)
     model = NeuralBoundaryModel()
 
-    complete = sorted(
-        model.score_labels(text, _labels(len(text), set(boundaries), first_tag))
-        for first_tag in (0, 1)
-    )
+    complete = sorted(model.score_labels(text, _labels(len(text), set(boundaries), first_tag)) for first_tag in (0, 1))
 
     assert _edge_totals(text, boundaries) == pytest.approx(complete)
 

@@ -260,21 +260,19 @@ class NeuralBoundaryModel:
             )
             self._layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
             for layer in range(NUM_LAYERS):
-                self._layers.append(
-                    (
-                        _dequantize(
-                            data[f"l{layer}_w_q"],
-                            data[f"l{layer}_w_scale"],
-                            data[f"l{layer}_w_zp"],
-                        ),
-                        _dequantize(
-                            data[f"l{layer}_r_q"],
-                            data[f"l{layer}_r_scale"],
-                            data[f"l{layer}_r_zp"],
-                        ),
-                        _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32)),
-                    )
-                )
+                self._layers.append((
+                    _dequantize(
+                        data[f"l{layer}_w_q"],
+                        data[f"l{layer}_w_scale"],
+                        data[f"l{layer}_w_zp"],
+                    ),
+                    _dequantize(
+                        data[f"l{layer}_r_q"],
+                        data[f"l{layer}_r_scale"],
+                        data[f"l{layer}_r_zp"],
+                    ),
+                    _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32)),
+                ))
 
             self._projection_weights = _dequantize(
                 data["projection_q"],

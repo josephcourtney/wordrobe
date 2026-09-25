@@ -206,7 +206,9 @@ def _run_benchmark(reference: Splitter, model: NeuralBoundaryModel, url: str) ->
         if reference_top1 != model_top1 and len(divergences) < MAX_DIVERGENCES:
             divergences.append((text, reference_top1, model_top1, acceptable))
 
-    count = sum(1 for row in rows if row["prefix"].isascii() and row["prefix"].isalnum() and len(row["prefix"]) <= MAX_LEN)
+    count = sum(
+        1 for row in rows if row["prefix"].isascii() and row["prefix"].isalnum() and len(row["prefix"]) <= MAX_LEN
+    )
     print(f"benchmark_samples={count}")
     print(f"benchmark_top1_parity={top1_parity / count:.6%}")
     print(f"benchmark_top3_order_parity={top3_order_parity / count:.6%}")

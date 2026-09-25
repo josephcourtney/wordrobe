@@ -60,17 +60,15 @@ def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
             raise ValueError(msg)
         w_name, r_name, b_name = node.input[1:4]
         w_scale_name, w_zp_name, r_scale_name, r_zp_name = node.input[8:12]
-        arrays.update(
-            {
-                f"l{layer}_w_q": _required(initializers, w_name),
-                f"l{layer}_w_scale": _required(initializers, w_scale_name),
-                f"l{layer}_w_zp": _required(initializers, w_zp_name),
-                f"l{layer}_r_q": _required(initializers, r_name),
-                f"l{layer}_r_scale": _required(initializers, r_scale_name),
-                f"l{layer}_r_zp": _required(initializers, r_zp_name),
-                f"l{layer}_bias": _required(initializers, b_name),
-            }
-        )
+        arrays.update({
+            f"l{layer}_w_q": _required(initializers, w_name),
+            f"l{layer}_w_scale": _required(initializers, w_scale_name),
+            f"l{layer}_w_zp": _required(initializers, w_zp_name),
+            f"l{layer}_r_q": _required(initializers, r_name),
+            f"l{layer}_r_scale": _required(initializers, r_scale_name),
+            f"l{layer}_r_zp": _required(initializers, r_zp_name),
+            f"l{layer}_bias": _required(initializers, b_name),
+        })
 
     with np.load(crf_path) as crf:
         arrays["crf_transitions"] = np.asarray(crf["transitions"], dtype=np.float32)

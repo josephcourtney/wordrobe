@@ -1,3 +1,4 @@
+# ruff: noqa: INP001
 """Convert DKSplit's published ONNX/CRF files into the NumPy runtime format.
 
 This is a development-time utility. The resulting NPZ is consumed by
@@ -10,16 +11,17 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import dksplit
 import numpy as np
 import onnx
 from onnx import numpy_helper
 
 FORMAT_VERSION = 1
+EXPECTED_LSTM_NODES = 3
+MIN_LSTM_INPUTS = 12
 
 
 def _installed_model_paths() -> tuple[Path, Path]:
-    import dksplit
-
     model_dir = Path(dksplit.__file__).resolve().parent / "models"
     return model_dir / "dksplit-int8.onnx", model_dir / "dksplit.npz"
 
@@ -32,7 +34,8 @@ def _required(initializers: dict[str, np.ndarray], name: str) -> np.ndarray:
     try:
         return initializers[name]
     except KeyError as exc:
-        raise ValueError(f"required ONNX initializer is missing: {name}") from exc
+        message = f"required ONNX initializer is missing: {name}"
+        raise ValueError(message) from exc
 
 
 def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
@@ -40,8 +43,9 @@ def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
     model = onnx.load(onnx_path, load_external_data=False)
     initializers = _initializers(model)
     lstm_nodes = [node for node in model.graph.node if node.op_type == "DynamicQuantizeLSTM"]
-    if len(lstm_nodes) != 3:
-        raise ValueError(f"expected exactly 3 DynamicQuantizeLSTM nodes, found {len(lstm_nodes)}")
+    if len(lstm_nodes) != EXPECTED_LSTM_NODES:
+        message = f"expected exactly {EXPECTED_LSTM_NODES} DynamicQuantizeLSTM nodes, found {len(lstm_nodes)}"
+        raise ValueError(message)
 
     arrays: dict[str, np.ndarray] = {
         "format_version": np.asarray(FORMAT_VERSION, dtype=np.int32),
@@ -55,8 +59,9 @@ def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
     }
 
     for layer, node in enumerate(lstm_nodes):
-        if len(node.input) < 12:
-            raise ValueError(f"layer {layer} has unexpected DynamicQuantizeLSTM inputs")
+        if len(node.input) < MIN_LSTM_INPUTS:
+            message = f"layer {layer} has unexpected DynamicQuantizeLSTM inputs"
+            raise ValueError(message)
         w_name, r_name, b_name = node.input[1:4]
         w_scale_name, w_zp_name, r_scale_name, r_zp_name = node.input[8:12]
         arrays.update(
@@ -90,10 +95,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _parser().parse_args()
-    if (args.onnx is None) != (args.crf is None):
-        raise SystemExit("--onnx and --crf must be supplied together")
-    onnx_path, crf_path = (args.onnx, args.crf) if args.onnx is not None else _installed_model_paths()
-    assert onnx_path is not None and crf_path is not None
+    if args.onnx is None and args.crf is None:
+        onnx_path, crf_path = _installed_model_paths()
+    elif args.onnx is not None and args.crf is not None:
+        onnx_path, crf_path = args.onnx, args.crf
+    else:
+        message = "--onnx and --crf must be supplied together"
+        raise SystemExit(message)
+
     convert(onnx_path, crf_path, args.output)
     print(f"source_onnx_bytes={onnx_path.stat().st_size}")
     print(f"converted_npz_bytes={args.output.stat().st_size}")

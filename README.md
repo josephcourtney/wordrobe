@@ -2,7 +2,7 @@
 
 > A costume change for words.
 
-`wordrobe` is a small Python utility for recognizing, decoding, converting, and heuristically recovering words from common identifier conventions such as `snake_case`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `camelCase`, `PascalCase`, and delimiter-free text.
+`wordrobe` is a small Python utility for splitting, identifying, and converting common identifier conventions such as `snake_case`, `SCREAMING_SNAKE_CASE`, `kebab-case`, `camelCase`, `PascalCase`, and delimiter-free text.
 
 ## Development setup
 
@@ -152,43 +152,90 @@ Case transitions such as `parseHTTPResponse` and transitions between digits and 
 
 ## CLI
 
-`decode` is the canonical word-recovery command. When `--case` is omitted it does **not** first require a unique case classification; it directly combines explicit boundaries, case transitions, numeric transitions, and lexical segmentation.
+The CLI is organized around four operations plus case discovery:
+
+```text
+split:    text  -> component words
+join:     words -> formatted text
+convert:  text  -> formatted text
+case:     text  -> case classification
+cases:            supported case conventions
+```
+
+Bare `wordrobe` prints the command overview, and `wordrobe --version` prints the installed version.
+
+### Split words
+
+`split` recovers semantic component words. With no `--from`, it directly combines explicit boundaries, case and numeric transitions, lexical evidence, and the selected boundary model. `--from` validates the input case; reversible cases are then split exactly.
 
 ```bash
-wordrobe encode --case camelCase hello world
-# helloWorld
-
-wordrobe decode hello_world
+wordrobe split hello_world
 # hello world
 
-wordrobe decode isThisACamel
+wordrobe split isThisACamel
 # is this a camel
 
-wordrobe decode isthisacamel
+wordrobe split isthisacamel
 # is this a camel
 
-wordrobe decode isthisasnorql
+wordrobe split isthisasnorql
 # is this a snorql
 
-wordrobe decode --boundary-model dksplit isthisacamel
+wordrobe split isthisacamel --boundary-model dksplit
 # is this a camel
 
-wordrobe decode --case snake_case hello_world
+wordrobe split hello_world --from snake_case
 # hello world
+```
 
-wordrobe convert --to snake_case isThisACamel
+The optional DKSplit backend remains explicit. Installing NumPy does not silently change segmentation behavior.
+
+### Join words
+
+`join` formats already-separated semantic words in a target convention:
+
+```bash
+wordrobe join hello world --to camelCase
+# helloWorld
+
+wordrobe join api client --to SCREAMING_SNAKE_CASE
+# API_CLIENT
+```
+
+### Convert text
+
+`convert` is the composition of splitting and joining. `--from` describes the input convention; `--to` always describes the output convention.
+
+```bash
+wordrobe convert isThisACamel --to snake_case
 # is_this_a_camel
 
-wordrobe convert --from snake_case --to PascalCase hello_world
+wordrobe convert hello_world --from snake_case --to PascalCase
 # HelloWorld
 
-wordrobe guess hello_world
+wordrobe convert isthisasnorql --to kebab-case --boundary-model dksplit
+# is-this-a-snorql
+```
+
+### Identify cases
+
+`case` identifies a uniquely determined convention. `--all` prints every syntactically compatible convention in deterministic preference order.
+
+```bash
+wordrobe case hello_world
 # snake_case
 
-wordrobe guess --all hello
+wordrobe case hello --all
 # prints every compatible case in deterministic preference order
 ```
 
-An explicit `--case` asks for that syntax to be validated. Reversible cases are then decoded exactly; implicit-boundary cases still require heuristic segmentation after validation.
+`cases` lists all supported conventions and indicates whether their word boundaries are explicit or must be inferred:
 
-The former `segment` command remains as a hidden compatibility alias for `decode`; there is no longer a separate CLI segmentation policy. `guess` remains separate because identifying a case convention is a different question from recovering probable word boundaries.
+```bash
+wordrobe cases
+# snake_case               explicit boundaries
+# ...
+# camelCase                inferred boundaries
+```
+
+Case identification remains separate from word recovery: identifying a syntax and recovering probable semantic word boundaries are different questions.

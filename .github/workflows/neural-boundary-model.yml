@@ -22,18 +22,21 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONPATH: src
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
 
-      - uses: actions/setup-python@v5
+      - name: Set up reference Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.14"
+          python-version: "3.13"
 
-      - name: Install runtime and reference dependencies
+      - name: Install reference dependencies
         run: |
-          python -m pip install --disable-pip-version-check -e . \
+          python -m pip install --disable-pip-version-check \
             numpy dksplit==1.0.2 onnx==1.19.0 pytest ruff
 
       - name: Convert published model
@@ -63,6 +66,14 @@ jobs:
       - name: Test neural runtime
         run: pytest -q tests/unit/test_neural_boundary.py
 
+      - name: Compare with published ONNX implementation
+        run: python scripts/compare_dksplit_onnx.py --weights src/wordrobe/data/dksplit-boundaries-v1.npz
+
+      - name: Set up package Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
       - name: Verify wheel contains model and attribution
         run: |
           python -m pip wheel --no-deps . -w /tmp/wheels
@@ -79,6 +90,3 @@ jobs:
               missing = required.difference(archive.namelist())
               assert not missing, f'missing from {wheel}: {sorted(missing)}'
           PY
-
-      - name: Compare with published ONNX implementation
-        run: python scripts/compare_dksplit_onnx.py --weights src/wordrobe/data/dksplit-boundaries-v1.npz

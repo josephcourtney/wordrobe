@@ -1,4 +1,3 @@
-# ruff: file-ignore [INP001]
 """Compare the minimal NumPy DKSplit runtime with the published ONNX model.
 
 This development-only script intentionally owns all ONNX Runtime and DKSplit
@@ -23,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from experiments.dksplit_numpy.runtime import MAX_LEN, NumpyDKSplit, text_to_ids  # ruff: ignore [E402]
+from experiments.dksplit_numpy.runtime import MAX_LEN, NumpyDKSplit, text_to_ids
 
 BENCHMARK_URL = "https://raw.githubusercontent.com/ABTdomain/dksplit/main/benchmark/sample_1000.csv"
 MAX_DIVERGENCES = 20
@@ -77,7 +76,7 @@ def _reference_emissions(splitter: Splitter, text: str) -> np.ndarray:
 
 
 def _load_benchmark(url: str) -> list[dict[str, str]]:
-    with urllib.request.urlopen(url, timeout=30) as response:  # ruff: ignore [S310]
+    with urllib.request.urlopen(url, timeout=30) as response:
         text = response.read().decode("utf-8")
     return list(csv.DictReader(io.StringIO(text)))
 
@@ -127,7 +126,7 @@ def _run_representative(reference: Splitter, model: NumpyDKSplit) -> None:
         print(f"representative_divergence={text!r} onnx={expected!r} numpy={actual!r}")
 
 
-def _run_benchmark(reference: Splitter, model: NumpyDKSplit, url: str) -> None:  # ruff: ignore [PLR0914, PLR0915]
+def _run_benchmark(reference: Splitter, model: NumpyDKSplit, url: str) -> None:
     rows = _load_benchmark(url)
     top1_parity = 0
     top3_order_parity = 0

@@ -7,7 +7,12 @@ from importlib import resources
 
 import numpy as np
 
-from wordrobe._neural_boundary import MODEL_RESOURCE, NUM_TAGS, NeuralBoundaryModel
+from wordrobe._neural_boundary import (
+    MODEL_RESOURCE,
+    NUM_TAGS,
+    NeuralBoundaryModel,
+    supports_neural_text,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +69,11 @@ class NeuralBoundaryScorer:
             self._transitions = np.asarray(data["crf_transitions"], dtype=np.float32)
             self._start_transitions = np.asarray(data["crf_start_transitions"], dtype=np.float32)
             self._end_transitions = np.asarray(data["crf_end_transitions"], dtype=np.float32)
+
+    @staticmethod
+    def supports(text: str) -> bool:
+        """Return whether the neural model can score *text* without loss."""
+        return supports_neural_text(text)
 
     def score_run(self, text: str) -> NeuralSequenceScores:
         """Compute emissions once and return reusable CRF scoring terms."""

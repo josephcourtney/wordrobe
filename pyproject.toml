@@ -3,6 +3,7 @@
   version = "0.1.0"
   description = "A costume change for words."
   readme = "README.md"
+  license-files = ["THIRD_PARTY_NOTICES.md"]
   authors = [
     { name = "Joseph Courtney", email = "5942706+josephcourtney@users.noreply.github.com" },
   ]

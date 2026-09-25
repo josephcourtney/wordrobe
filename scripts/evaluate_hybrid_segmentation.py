@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from wordrobe.segment import BoundaryModel, WordSegmenter
+from wordrobe.segment import DEFAULT_NEURAL_WEIGHT, BoundaryModel, WordSegmenter
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +111,8 @@ def main() -> None:
     args = _parser().parse_args()
     stable_total = sum(not case.xfail for case in CASES)
     xfail_total = len(CASES) - stable_total
+    default_failures: list[tuple[Case, tuple[str, ...]]] | None = None
+
     with TemporaryDirectory() as directory:
         wordlist = Path(directory) / "empty.txt"
         wordlist.write_text("", encoding="utf-8")
@@ -122,6 +125,13 @@ def main() -> None:
                 print(f"  REGRESSION {case.text} -> {' '.join(actual)}")
             for case, actual in xfail_failures:
                 print(f"  xfail {case.text} -> {' '.join(actual)}")
+            if math.isclose(weight, DEFAULT_NEURAL_WEIGHT):
+                default_failures = stable_failures
+
+    if default_failures:
+        summary = ", ".join(case.text for case, _actual in default_failures)
+        msg = f"default neural weight {DEFAULT_NEURAL_WEIGHT:g} regressed stable adversarial cases: {summary}"
+        raise SystemExit(msg)
 
 
 if __name__ == "__main__":

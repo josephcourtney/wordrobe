@@ -1,0 +1,92 @@
+name: Neural boundary model
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - src/wordrobe/_neural_boundary.py
+      - src/wordrobe/data/DKSPLIT_NOTICE.txt
+      - scripts/convert_dksplit_weights.py
+      - scripts/compare_dksplit_onnx.py
+      - tests/unit/test_neural_boundary.py
+      - THIRD_PARTY_NOTICES.md
+      - .github/workflows/neural-boundary-model.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+
+      - name: Set up reference Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install reference dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            numpy dksplit==1.0.2 onnx==1.19.0 pytest ruff
+
+      - name: Convert published model
+        run: python scripts/convert_dksplit_weights.py
+
+      - name: Commit converted resource when changed
+        if: github.event_name == 'pull_request'
+        run: |
+          git add src/wordrobe/data/dksplit-boundaries-v1.npz
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'Add converted DKSplit model resource'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
+      - name: Check neural sources
+        run: |
+          python -m compileall -q src/wordrobe/_neural_boundary.py scripts/convert_dksplit_weights.py scripts/compare_dksplit_onnx.py
+          ruff check --no-fix --ignore INP001,S310,PLR0914,PLR0915,PLC2701,E501 \
+            src/wordrobe/_neural_boundary.py \
+            scripts/convert_dksplit_weights.py \
+            scripts/compare_dksplit_onnx.py \
+            tests/unit/test_neural_boundary.py
+
+      - name: Test neural runtime
+        run: pytest -q tests/unit/test_neural_boundary.py
+
+      - name: Compare with published ONNX implementation
+        run: python scripts/compare_dksplit_onnx.py --weights src/wordrobe/data/dksplit-boundaries-v1.npz
+
+      - name: Set up package Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Verify wheel contains model and attribution
+        run: |
+          python -m pip wheel --no-deps . -w /tmp/wheels
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheel = next(Path('/tmp/wheels').glob('wordrobe-*.whl'))
+          required = {
+              'wordrobe/data/dksplit-boundaries-v1.npz',
+              'wordrobe/data/DKSPLIT_NOTICE.txt',
+          }
+          with ZipFile(wheel) as archive:
+              missing = required.difference(archive.namelist())
+              assert not missing, f'missing from {wheel}: {sorted(missing)}'
+          PY

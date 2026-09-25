@@ -14,6 +14,7 @@ on:
       - scripts/compare_dksplit_onnx.py
       - scripts/evaluate_hybrid_segmentation.py
       - tests/unit/test_neural_boundary.py
+      - tests/unit/test_neural_scoring.py
       - tests/**/test_*segment*.py
       - pyproject.toml
       - uv.lock
@@ -48,15 +49,26 @@ jobs:
           python -m pip install --disable-pip-version-check \
             uv numpy dksplit==1.0.2 onnx==1.19.0 pytest ruff
 
-      - name: Refresh lockfile and model
+      - name: Refresh lockfile, model, and formatting
         run: |
           uv lock
           python scripts/convert_dksplit_weights.py
+          ruff format \
+            src/wordrobe/_neural_boundary.py \
+            src/wordrobe/_neural_scoring.py \
+            src/wordrobe/segment.py \
+            src/wordrobe/cli.py \
+            scripts/convert_dksplit_weights.py \
+            scripts/compare_dksplit_onnx.py \
+            scripts/evaluate_hybrid_segmentation.py \
+            tests/unit/test_neural_boundary.py \
+            tests/unit/test_neural_scoring.py
 
       - name: Commit generated resources when changed
         if: github.event_name == 'pull_request'
         run: |
-          git add uv.lock src/wordrobe/data/dksplit-boundaries-v1.npz
+          git add -u
+          git add src/wordrobe/data/dksplit-boundaries-v1.npz
           if git diff --cached --quiet; then
             exit 0
           fi
@@ -83,10 +95,11 @@ jobs:
             scripts/convert_dksplit_weights.py \
             scripts/compare_dksplit_onnx.py \
             scripts/evaluate_hybrid_segmentation.py \
-            tests/unit/test_neural_boundary.py
+            tests/unit/test_neural_boundary.py \
+            tests/unit/test_neural_scoring.py
 
       - name: Test neural runtime
-        run: pytest -q tests/unit/test_neural_boundary.py
+        run: pytest -q tests/unit/test_neural_boundary.py tests/unit/test_neural_scoring.py
 
       - name: Sweep hybrid neural weights
         run: python scripts/evaluate_hybrid_segmentation.py

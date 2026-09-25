@@ -18,7 +18,7 @@ from wordrobe.case import (
 from wordrobe.case import (
     encode as encode_case,
 )
-from wordrobe.segment import WordSegmenter
+from wordrobe.segment import DEFAULT_NEURAL_WEIGHT, BoundaryModel, WordSegmenter
 
 ENTRYPOINT_NAME = ""
 HELP_HEADER = f"{metadata.executable}: {metadata.description}"
@@ -41,7 +41,12 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=2)
 
 
-def _recover_words(text: str, case: Case | None = None) -> list[str]:
+def _recover_words(
+    text: str,
+    case: Case | None = None,
+    boundary_model: BoundaryModel = BoundaryModel.HEURISTIC,
+    neural_weight: float = DEFAULT_NEURAL_WEIGHT,
+) -> list[str]:
     """Recover semantic words using exact boundaries when requested, otherwise all available evidence."""
     if case is not None and is_reversible(case):
         return decode_case(text, case)
@@ -50,13 +55,19 @@ def _recover_words(text: str, case: Case | None = None) -> list[str]:
         msg = f"{text!r} is not canonical {case.value}."
         raise CaseError(msg)
 
-    return [word.lower() for word in WordSegmenter().segment(text)]
+    segmenter = WordSegmenter(boundary_model=boundary_model, neural_weight=neural_weight)
+    return [word.lower() for word in segmenter.segment(text)]
 
 
-def _echo_words(text: str, case: Case | None = None) -> None:
+def _echo_words(
+    text: str,
+    case: Case | None = None,
+    boundary_model: BoundaryModel = BoundaryModel.HEURISTIC,
+    neural_weight: float = DEFAULT_NEURAL_WEIGHT,
+) -> None:
     try:
-        words = _recover_words(text, case)
-    except CaseError as exc:
+        words = _recover_words(text, case, boundary_model, neural_weight)
+    except (CaseError, ImportError, ValueError) as exc:
         _fail(str(exc))
 
     typer.echo(" ".join(words))
@@ -88,9 +99,17 @@ def decode_command(
         Case | None,
         typer.Option("--case", "-c", help="Require this source case instead of automatic boundary recovery."),
     ] = None,
+    boundary_model: Annotated[
+        BoundaryModel,
+        typer.Option("--boundary-model", help="Boundary evidence model for heuristic recovery."),
+    ] = BoundaryModel.HEURISTIC,
+    neural_weight: Annotated[
+        float,
+        typer.Option("--neural-weight", min=0.0, help="Weight of neural CRF evidence when enabled."),
+    ] = DEFAULT_NEURAL_WEIGHT,
 ) -> None:
     """Recover semantic component words from text."""
-    _echo_words(text, case)
+    _echo_words(text, case, boundary_model, neural_weight)
 
 
 @app.command("convert")
@@ -101,12 +120,20 @@ def convert_command(
         Case | None,
         typer.Option("--from", help="Require this source case instead of automatic boundary recovery."),
     ] = None,
+    boundary_model: Annotated[
+        BoundaryModel,
+        typer.Option("--boundary-model", help="Boundary evidence model for heuristic recovery."),
+    ] = BoundaryModel.HEURISTIC,
+    neural_weight: Annotated[
+        float,
+        typer.Option("--neural-weight", min=0.0, help="Weight of neural CRF evidence when enabled."),
+    ] = DEFAULT_NEURAL_WEIGHT,
 ) -> None:
     """Recover component words and encode them in another case convention."""
     try:
-        words = _recover_words(text, from_case)
+        words = _recover_words(text, from_case, boundary_model, neural_weight)
         value = encode_case(words, to_case)
-    except (CaseError, TypeError, ValueError) as exc:
+    except (CaseError, ImportError, TypeError, ValueError) as exc:
         _fail(str(exc))
 
     typer.echo(value)
@@ -142,9 +169,19 @@ def guess_command(
 
 
 @app.command("segment", hidden=True)
-def segment_command(text: Annotated[str, typer.Argument(help="Text to recover component words from.")]) -> None:
+def segment_command(
+    text: Annotated[str, typer.Argument(help="Text to recover component words from.")],
+    boundary_model: Annotated[
+        BoundaryModel,
+        typer.Option("--boundary-model", help="Boundary evidence model for heuristic recovery."),
+    ] = BoundaryModel.HEURISTIC,
+    neural_weight: Annotated[
+        float,
+        typer.Option("--neural-weight", min=0.0, help="Weight of neural CRF evidence when enabled."),
+    ] = DEFAULT_NEURAL_WEIGHT,
+) -> None:
     """Compatibility alias for `decode`."""
-    _echo_words(text)
+    _echo_words(text, boundary_model=boundary_model, neural_weight=neural_weight)
 
 
 if __name__ == "__main__":

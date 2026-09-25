@@ -41,10 +41,10 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=2)
 
 
-def _version_callback(value: bool) -> None:
+def _version_callback(value: object) -> None:
     if value:
         typer.echo(metadata.version)
-        raise typer.Exit()
+        raise typer.Exit
 
 
 def _recover_words(
@@ -82,6 +82,7 @@ def _echo_words(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
+    *,
     _version: Annotated[
         bool,
         typer.Option(

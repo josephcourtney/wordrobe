@@ -28,7 +28,7 @@ jobs:
       - name: Check experiment sources
         run: |
           python -m compileall -q experiments/dksplit_numpy/runtime.py scripts/convert_dksplit_weights.py scripts/compare_dksplit_onnx.py
-          ruff check experiments/dksplit_numpy/runtime.py scripts/convert_dksplit_weights.py scripts/compare_dksplit_onnx.py
+          ruff check --no-fix experiments/dksplit_numpy/runtime.py scripts/convert_dksplit_weights.py scripts/compare_dksplit_onnx.py
 
       - name: Convert published weights
         run: python scripts/convert_dksplit_weights.py --output /tmp/dksplit-numpy.npz

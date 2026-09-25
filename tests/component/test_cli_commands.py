@@ -5,98 +5,81 @@ from wordrobe.cli import app
 runner = CliRunner()
 
 
-def test_segment_command_is_compatibility_alias_for_decode() -> None:
-    decode_result = runner.invoke(app, ["decode", "word2number"])
-    segment_result = runner.invoke(app, ["segment", "word2number"])
-
-    assert decode_result.exit_code == 0
-    assert segment_result.exit_code == 0
-    assert segment_result.stdout == decode_result.stdout
-    assert segment_result.stdout.strip() == "word 2 number"
-
-
-def test_segment_command_is_hidden_from_top_level_help() -> None:
-    result = runner.invoke(app, ["--help"])
+def test_split_recovers_words_across_numeric_boundaries() -> None:
+    result = runner.invoke(app, ["split", "word2number"])
 
     assert result.exit_code == 0
-    assert "segment" not in result.stdout
+    assert result.stdout.strip() == "word 2 number"
 
 
-def test_encode_command_prints_encoded_text() -> None:
-    result = runner.invoke(app, ["encode", "--case", "camelCase", "hello", "world"])
-
-    assert result.exit_code == 0
-    assert result.stdout.strip() == "helloWorld"
-
-
-def test_decode_command_prints_component_words() -> None:
-    result = runner.invoke(app, ["decode", "--case", "snake_case", "hello_world"])
+def test_split_recovers_reversible_case_without_case_classification() -> None:
+    result = runner.invoke(app, ["split", "hello_world"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "hello world"
 
 
-def test_decode_command_recovers_reversible_case_without_guessing() -> None:
-    result = runner.invoke(app, ["decode", "hello_world"])
-
-    assert result.exit_code == 0
-    assert result.stdout.strip() == "hello world"
-
-
-def test_decode_command_recovers_camel_boundaries() -> None:
-    result = runner.invoke(app, ["decode", "isThisACamel"])
+def test_split_recovers_camel_boundaries() -> None:
+    result = runner.invoke(app, ["split", "isThisACamel"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "is this a camel"
 
 
-def test_decode_command_viterbi_segments_flat_text() -> None:
-    result = runner.invoke(app, ["decode", "isthisacamel"])
+def test_split_viterbi_segments_flat_text() -> None:
+    result = runner.invoke(app, ["split", "isthisacamel"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "is this a camel"
 
 
-def test_decode_command_no_longer_rejects_ambiguous_case_when_words_are_recoverable() -> None:
-    result = runner.invoke(app, ["decode", "hello"])
+def test_split_accepts_ambiguous_case_when_words_are_recoverable() -> None:
+    result = runner.invoke(app, ["split", "hello"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "hello"
 
 
-def test_decode_command_can_heuristically_decode_explicit_camel_case() -> None:
-    result = runner.invoke(app, ["decode", "--case", "camelCase", "isThisATest"])
+def test_split_can_heuristically_recover_explicit_camel_case() -> None:
+    result = runner.invoke(app, ["split", "isThisATest", "--from", "camelCase"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "is this a test"
 
 
-def test_convert_command_translates_explicit_case() -> None:
+def test_join_prints_encoded_text() -> None:
+    result = runner.invoke(app, ["join", "hello", "world", "--to", "camelCase"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "helloWorld"
+
+
+def test_convert_translates_explicit_case() -> None:
     result = runner.invoke(
         app,
-        ["convert", "--from", "snake_case", "--to", "PascalCase", "hello_world"],
+        ["convert", "hello_world", "--from", "snake_case", "--to", "PascalCase"],
     )
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "HelloWorld"
 
 
-def test_convert_command_recovers_source_words_when_from_is_omitted() -> None:
-    result = runner.invoke(app, ["convert", "--to", "snake_case", "isThisACamel"])
+def test_convert_recovers_source_words_when_from_is_omitted() -> None:
+    result = runner.invoke(app, ["convert", "isThisACamel", "--to", "snake_case"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "is_this_a_camel"
 
 
-def test_guess_command_prints_unique_case() -> None:
-    result = runner.invoke(app, ["guess", "hello_world"])
+def test_case_prints_unique_case() -> None:
+    result = runner.invoke(app, ["case", "hello_world"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "snake_case"
 
 
-def test_guess_all_prints_compatible_cases() -> None:
-    result = runner.invoke(app, ["guess", "--all", "hello"])
+def test_case_all_prints_compatible_cases_in_preference_order() -> None:
+    result = runner.invoke(app, ["case", "hello", "--all"])
 
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
@@ -110,22 +93,22 @@ def test_guess_all_prints_compatible_cases() -> None:
     ]
 
 
-def test_guess_command_rejects_ambiguous_text() -> None:
-    result = runner.invoke(app, ["guess", "hello"])
+def test_case_rejects_ambiguous_text_without_all() -> None:
+    result = runner.invoke(app, ["case", "hello"])
 
     assert result.exit_code == 2
     assert "ambiguous" in result.stderr
 
 
-def test_decode_command_rejects_noncanonical_explicit_case() -> None:
-    result = runner.invoke(app, ["decode", "--case", "snake_case", "Hello_World"])
+def test_split_rejects_noncanonical_explicit_reversible_case() -> None:
+    result = runner.invoke(app, ["split", "Hello_World", "--from", "snake_case"])
 
     assert result.exit_code == 2
     assert "does not match any supported case" in result.stderr
 
 
-def test_decode_command_rejects_noncanonical_explicit_implicit_case() -> None:
-    result = runner.invoke(app, ["decode", "--case", "camelCase", "HelloWorld"])
+def test_split_rejects_noncanonical_explicit_inferred_case() -> None:
+    result = runner.invoke(app, ["split", "HelloWorld", "--from", "camelCase"])
 
     assert result.exit_code == 2
     assert "not canonical camelCase" in result.stderr

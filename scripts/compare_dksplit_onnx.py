@@ -22,6 +22,14 @@ if TYPE_CHECKING:
 BENCHMARK_URL = "https://raw.githubusercontent.com/ABTdomain/dksplit/main/benchmark/sample_1000.csv"
 MAX_DIVERGENCES = 20
 UNK_IDX = 1
+MIN_BENCHMARK_TOP1_PARITY = 0.99
+MIN_BENCHMARK_TOP3_ORDER_PARITY = 0.95
+MIN_BENCHMARK_TOP5_ORDER_PARITY = 0.90
+MAX_REPRESENTATIVE_EMISSION_ERROR = 0.10
+MAX_BENCHMARK_EMISSION_ERROR = 0.20
+MAX_MEAN_EMISSION_ERROR = 0.02
+MAX_ACCURACY_DEGRADATION = 0.002
+MAX_TOPK_ACCURACY_DEGRADATION = 0.001
 
 REPRESENTATIVE_INPUTS = [
     "chatgptlogin",
@@ -147,6 +155,18 @@ def _acceptable(row: dict[str, str]) -> set[str]:
     return {value.strip().lower() for value in (row["truth"], row.get("might_right", "")) if value.strip()}
 
 
+def _require_at_least(name: str, value: float, minimum: float) -> None:
+    if value < minimum:
+        msg = f"{name} regression: {value:.6%} < required {minimum:.6%}"
+        raise SystemExit(msg)
+
+
+def _require_at_most(name: str, value: float, maximum: float) -> None:
+    if value > maximum:
+        msg = f"{name} regression: {value:.9g} > allowed {maximum:.9g}"
+        raise SystemExit(msg)
+
+
 def _run_representative(reference: _ReferenceSplitter, model: NeuralBoundaryModel) -> None:
     top1_matches = 0
     top3_order_matches = 0
@@ -166,11 +186,19 @@ def _run_representative(reference: _ReferenceSplitter, model: NeuralBoundaryMode
         top3_order_matches += reference.split_topk(text, 3) == _model_topk(model, text, 3)
 
     count = len(REPRESENTATIVE_INPUTS)
+    top1_parity = top1_matches / count
+    top3_order_parity = top3_order_matches / count
+    mean_error = total_error / emission_values
     print(f"representative_samples={count}")
-    print(f"representative_top1_parity={top1_matches / count:.6%}")
-    print(f"representative_top3_order_parity={top3_order_matches / count:.6%}")
+    print(f"representative_top1_parity={top1_parity:.6%}")
+    print(f"representative_top3_order_parity={top3_order_parity:.6%}")
     print(f"representative_max_abs_emission_error={max_error:.9g}")
-    print(f"representative_mean_abs_emission_error={total_error / emission_values:.9g}")
+    print(f"representative_mean_abs_emission_error={mean_error:.9g}")
+
+    _require_at_least("representative_top1_parity", top1_parity, 1.0)
+    _require_at_least("representative_top3_order_parity", top3_order_parity, 1.0)
+    _require_at_most("representative_max_abs_emission_error", max_error, MAX_REPRESENTATIVE_EMISSION_ERROR)
+    _require_at_most("representative_mean_abs_emission_error", mean_error, MAX_MEAN_EMISSION_ERROR)
 
 
 def _run_benchmark(reference: _ReferenceSplitter, model: NeuralBoundaryModel, url: str) -> None:
@@ -240,24 +268,63 @@ def _run_benchmark(reference: _ReferenceSplitter, model: NeuralBoundaryModel, ur
     count = sum(
         1 for row in rows if row["prefix"].isascii() and row["prefix"].isalnum() and len(row["prefix"]) <= MAX_LEN
     )
+    top1_parity_rate = top1_parity / count
+    top3_order_parity_rate = top3_order_parity / count
+    top5_order_parity_rate = top5_order_parity / count
+    reference_strict_rate = reference_strict / count
+    model_strict_rate = model_strict / count
+    reference_lenient_rate = reference_lenient / count
+    model_lenient_rate = model_lenient / count
+    reference_top3_rate = reference_top3 / count
+    model_top3_rate = model_top3 / count
+    reference_top5_rate = reference_top5 / count
+    model_top5_rate = model_top5 / count
+    mean_error = total_error / emission_values
+
     print(f"benchmark_samples={count}")
-    print(f"benchmark_top1_parity={top1_parity / count:.6%}")
-    print(f"benchmark_top3_order_parity={top3_order_parity / count:.6%}")
-    print(f"benchmark_top5_order_parity={top5_order_parity / count:.6%}")
-    print(f"benchmark_onnx_strict_top1={reference_strict / count:.6%}")
-    print(f"benchmark_numpy_strict_top1={model_strict / count:.6%}")
-    print(f"benchmark_onnx_lenient_top1={reference_lenient / count:.6%}")
-    print(f"benchmark_numpy_lenient_top1={model_lenient / count:.6%}")
-    print(f"benchmark_onnx_lenient_top3={reference_top3 / count:.6%}")
-    print(f"benchmark_numpy_lenient_top3={model_top3 / count:.6%}")
-    print(f"benchmark_onnx_lenient_top5={reference_top5 / count:.6%}")
-    print(f"benchmark_numpy_lenient_top5={model_top5 / count:.6%}")
+    print(f"benchmark_top1_parity={top1_parity_rate:.6%}")
+    print(f"benchmark_top3_order_parity={top3_order_parity_rate:.6%}")
+    print(f"benchmark_top5_order_parity={top5_order_parity_rate:.6%}")
+    print(f"benchmark_onnx_strict_top1={reference_strict_rate:.6%}")
+    print(f"benchmark_numpy_strict_top1={model_strict_rate:.6%}")
+    print(f"benchmark_onnx_lenient_top1={reference_lenient_rate:.6%}")
+    print(f"benchmark_numpy_lenient_top1={model_lenient_rate:.6%}")
+    print(f"benchmark_onnx_lenient_top3={reference_top3_rate:.6%}")
+    print(f"benchmark_numpy_lenient_top3={model_top3_rate:.6%}")
+    print(f"benchmark_onnx_lenient_top5={reference_top5_rate:.6%}")
+    print(f"benchmark_numpy_lenient_top5={model_top5_rate:.6%}")
     print(f"benchmark_max_abs_emission_error={max_error:.9g}")
-    print(f"benchmark_mean_abs_emission_error={total_error / emission_values:.9g}")
+    print(f"benchmark_mean_abs_emission_error={mean_error:.9g}")
     print(f"benchmark_onnx_seconds={reference_seconds:.6f}")
     print(f"benchmark_numpy_seconds={model_seconds:.6f}")
     for text, expected, actual, acceptable in divergences:
         print(f"benchmark_divergence={text!r} onnx={expected!r} numpy={actual!r} acceptable={sorted(acceptable)!r}")
+
+    _require_at_least("benchmark_top1_parity", top1_parity_rate, MIN_BENCHMARK_TOP1_PARITY)
+    _require_at_least("benchmark_top3_order_parity", top3_order_parity_rate, MIN_BENCHMARK_TOP3_ORDER_PARITY)
+    _require_at_least("benchmark_top5_order_parity", top5_order_parity_rate, MIN_BENCHMARK_TOP5_ORDER_PARITY)
+    _require_at_least(
+        "benchmark_numpy_strict_top1",
+        model_strict_rate,
+        reference_strict_rate - MAX_ACCURACY_DEGRADATION,
+    )
+    _require_at_least(
+        "benchmark_numpy_lenient_top1",
+        model_lenient_rate,
+        reference_lenient_rate - MAX_ACCURACY_DEGRADATION,
+    )
+    _require_at_least(
+        "benchmark_numpy_lenient_top3",
+        model_top3_rate,
+        reference_top3_rate - MAX_TOPK_ACCURACY_DEGRADATION,
+    )
+    _require_at_least(
+        "benchmark_numpy_lenient_top5",
+        model_top5_rate,
+        reference_top5_rate - MAX_TOPK_ACCURACY_DEGRADATION,
+    )
+    _require_at_most("benchmark_max_abs_emission_error", max_error, MAX_BENCHMARK_EMISSION_ERROR)
+    _require_at_most("benchmark_mean_abs_emission_error", mean_error, MAX_MEAN_EMISSION_ERROR)
 
 
 def _parser() -> argparse.ArgumentParser:

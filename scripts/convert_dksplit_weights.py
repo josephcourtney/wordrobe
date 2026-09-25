@@ -1,4 +1,3 @@
-# ruff: file-ignore [INP001]
 """Convert DKSplit's published ONNX/CRF files into the NumPy runtime format.
 
 This is a development-time utility. The resulting NPZ is consumed by

@@ -6,11 +6,13 @@ on:
       - main
     paths:
       - experiments/dksplit_numpy/**
+      - scripts/convert_dksplit_weights.py
+      - scripts/compare_dksplit_onnx.py
       - .github/workflows/dksplit-numpy-experiment.yml
   workflow_dispatch:
 
 jobs:
-  inspect-and-compare:
+  compare:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -20,17 +22,14 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install experiment dependencies
+      - name: Install comparison dependencies
         run: python -m pip install --disable-pip-version-check dksplit==1.0.2 onnx==1.19.0
 
-      - name: Compile experiment sources
-        run: python -m compileall -q experiments/dksplit_numpy
+      - name: Compile runtime and scripts
+        run: python -m compileall -q experiments/dksplit_numpy/runtime.py scripts/convert_dksplit_weights.py scripts/compare_dksplit_onnx.py
 
-      - name: Compare both NumPy backends with ONNX Runtime
-        run: python experiments/dksplit_numpy/compare.py --random-count 10
+      - name: Convert published weights
+        run: python scripts/convert_dksplit_weights.py --output /tmp/dksplit-numpy.npz
 
-      - name: Compare realistic identifier corpus and top-k results
-        run: python experiments/dksplit_numpy/realistic_compare.py
-
-      - name: Compare published DKSplit benchmark sample
-        run: python experiments/dksplit_numpy/benchmark_compare.py
+      - name: Compare stripped NumPy runtime with ONNX
+        run: python scripts/compare_dksplit_onnx.py --weights /tmp/dksplit-numpy.npz

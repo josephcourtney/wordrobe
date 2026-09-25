@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING
 
 try:
     import numpy as np
@@ -14,6 +14,7 @@ except ImportError as exc:  # pragma: no cover - exercised through optional depe
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import IO
 
 CHAR_VOCAB = "abcdefghijklmnopqrstuvwxyz0123456789"
 UNK_IDX = 1
@@ -246,7 +247,7 @@ class NeuralBoundaryModel:
             with Path(model_path).open("rb") as stream:
                 self._load(stream)
 
-    def _load(self, stream: BinaryIO) -> None:
+    def _load(self, stream: IO[bytes]) -> None:
         with np.load(stream) as data:
             version = int(data["format_version"])
             if version != FORMAT_VERSION:
@@ -260,21 +261,19 @@ class NeuralBoundaryModel:
             )
             self._layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
             for layer in range(NUM_LAYERS):
-                self._layers.append(
-                    (
-                        _dequantize(
-                            data[f"l{layer}_w_q"],
-                            data[f"l{layer}_w_scale"],
-                            data[f"l{layer}_w_zp"],
-                        ),
-                        _dequantize(
-                            data[f"l{layer}_r_q"],
-                            data[f"l{layer}_r_scale"],
-                            data[f"l{layer}_r_zp"],
-                        ),
-                        _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32)),
-                    )
-                )
+                self._layers.append((
+                    _dequantize(
+                        data[f"l{layer}_w_q"],
+                        data[f"l{layer}_w_scale"],
+                        data[f"l{layer}_w_zp"],
+                    ),
+                    _dequantize(
+                        data[f"l{layer}_r_q"],
+                        data[f"l{layer}_r_scale"],
+                        data[f"l{layer}_r_zp"],
+                    ),
+                    _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32)),
+                ))
 
             self._projection_weights = _dequantize(
                 data["projection_q"],

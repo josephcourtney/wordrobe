@@ -11,6 +11,11 @@
     "typer>=0.27.2",
   ]
 
+  [project.optional-dependencies]
+    neural = [
+      "numpy>=2.0",
+    ]
+
   [project.scripts]
     wordrobe = "wordrobe.cli:app"
 
@@ -22,6 +27,7 @@
   dev = [
     "coverage>=7.13.4",
     "import-linter>=2.10",
+    "numpy>=2.0",
     "pip-audit>=2.10.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
@@ -41,6 +47,23 @@
 
 [tool.ruff]
   extend = "./ruff.default.toml"
+
+  [tool.ruff.lint.extend-per-file-ignores]
+    "scripts/compare_dksplit_onnx.py" = [
+      "PLC2701", # Reference validator intentionally imports the private stripped runtime.
+      "PLR0914", # Benchmark keeps related counters local for side-by-side reporting.
+      "PLR0915", # Benchmark is linear orchestration rather than production control flow.
+      "S310",    # Benchmark URL is a fixed HTTPS project resource.
+    ]
+
+[[tool.ty.overrides]]
+  include = [
+    "scripts/compare_dksplit_onnx.py",
+    "scripts/convert_dksplit_weights.py",
+  ]
+
+  [tool.ty.overrides.rules]
+    all = "ignore"
 
 [tool.uv.sources]
   showcov = { git = "https://github.com/josephcourtney/showcov.git", rev = "db8a535b5cb5e36a3557f6559fa15f3cd7f20c0a" }

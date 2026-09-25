@@ -5,7 +5,9 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from enum import StrEnum
+from importlib import import_module
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from wordrobe._segment_core import (
     COMMON_WORDS,
@@ -29,17 +31,36 @@ DEFAULT_WEAK_SHORT_WORD_PENALTY = 20.0
 DEFAULT_IMPLICIT_BOUNDARY_PENALTY = 5.0
 DEFAULT_ADJACENT_SINGLETON_PENALTY = 24.0
 DEFAULT_ARTICLE_UNKNOWN_BONUS = 6.0
+DEFAULT_NEURAL_WEIGHT = 0.5
 
 SpanKind = Literal["token", "separator"]
 UnknownCost = Callable[[str], float]
 ExtraWords = Mapping[str, float] | Collection[str]
-_ViterbiState = tuple[bool, bool]  # (previous token is singleton, previous token is contextual article)
+_ViterbiState = tuple[bool, bool, int]  # singleton, contextual article, previous neural tag
 _ViterbiCosts = list[dict[_ViterbiState, float]]
 _ViterbiBack = list[dict[_ViterbiState, tuple[int, _ViterbiState]]]
-_START_STATE: _ViterbiState = (False, False)
+_NO_NEURAL_TAG = -1
+_START_STATE: _ViterbiState = (False, False, _NO_NEURAL_TAG)
 _ARTICLES = frozenset({"a", "an", "the"})
 _SHORT_WORD_THRESHOLD = 3
 _ARTICLE_UNKNOWN_MIN_LENGTH = 5
+
+
+class _NeuralScores(Protocol):
+    def edge_options(self, start: int, end: int, previous_tag: int) -> tuple[tuple[int, float], ...]: ...
+
+
+class _NeuralScorer(Protocol):
+    def supports(self, text: str) -> bool: ...
+
+    def score_run(self, text: str) -> _NeuralScores: ...
+
+
+class BoundaryModel(StrEnum):
+    """Boundary-evidence backends available to ``WordSegmenter``."""
+
+    HEURISTIC = "heuristic"
+    DKSPLIT = "dksplit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +71,15 @@ class SegmentSpan:
     start: int
     end: int
     kind: SpanKind
+
+
+def _load_neural_scorer() -> _NeuralScorer:
+    try:
+        module = import_module("wordrobe._neural_scoring")
+    except ImportError as exc:
+        msg = "DKSplit boundary evidence requires NumPy; install wordrobe[neural]"
+        raise ImportError(msg) from exc
+    return cast("_NeuralScorer", module.NeuralBoundaryScorer())
 
 
 class WordSegmenter(_CoreWordSegmenter):
@@ -75,6 +105,8 @@ class WordSegmenter(_CoreWordSegmenter):
         implicit_boundary_penalty: float = DEFAULT_IMPLICIT_BOUNDARY_PENALTY,
         adjacent_singleton_penalty: float = DEFAULT_ADJACENT_SINGLETON_PENALTY,
         article_unknown_bonus: float = DEFAULT_ARTICLE_UNKNOWN_BONUS,
+        boundary_model: BoundaryModel | str = BoundaryModel.HEURISTIC,
+        neural_weight: float = DEFAULT_NEURAL_WEIGHT,
     ) -> None:
         self._custom_costs = self._prepare_extra_words(extra_words, custom_word_cost)
         self._blocked_words = frozenset(filter(None, (self._normalize_custom_word(word) for word in blocked_words)))
@@ -93,6 +125,9 @@ class WordSegmenter(_CoreWordSegmenter):
             "adjacent_singleton_penalty",
         )
         self.article_unknown_bonus = self._finite_nonnegative(article_unknown_bonus, "article_unknown_bonus")
+        self.boundary_model = BoundaryModel(boundary_model)
+        self.neural_weight = self._finite_nonnegative(neural_weight, "neural_weight")
+        self._neural_scorer = _load_neural_scorer() if self.boundary_model is BoundaryModel.DKSPLIT else None
         configured_max_word_length = max_word_length
 
         super().__init__(
@@ -156,9 +191,6 @@ class WordSegmenter(_CoreWordSegmenter):
 
     def _default_unknown_cost(self, word: str) -> float:
         """Return a compositional cost for an unknown word candidate."""
-        # Unknown text pays one token-opening cost plus a linear character
-        # cost. Short OOV fragments are expensive because they are usually a
-        # symptom of carving dictionary substrings out of one unknown token.
         short_fragment_penalty = DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY * max(
             0,
             _SHORT_WORD_THRESHOLD - len(word),
@@ -177,9 +209,6 @@ class WordSegmenter(_CoreWordSegmenter):
         if word not in self.words:
             return None
 
-        # Bare spelling dictionaries frequently contain abbreviations,
-        # letters, symbols, and other short entries. Treat short dictionary-only
-        # matches as weak evidence so they cannot shred a coherent OOV token.
         weak_penalty = self.weak_short_word_penalty * max(0, _SHORT_WORD_THRESHOLD - len(word))
         return super().word_cost(word) + weak_penalty
 
@@ -216,10 +245,6 @@ class WordSegmenter(_CoreWordSegmenter):
         if pos <= 0 or pos >= len(text):
             return 0.0
 
-        # Every boundary invented inside an uninterrupted alphanumeric run
-        # needs some evidence. Explicit punctuation is handled as a separate
-        # run and therefore pays no such penalty. Case/numeric transitions are
-        # positive boundary evidence and offset this cohesion prior.
         cost = self.implicit_boundary_penalty
         left = text[pos - 1]
         right = text[pos]
@@ -239,29 +264,32 @@ class WordSegmenter(_CoreWordSegmenter):
         return cost
 
     def _transition_cost(self, previous: _ViterbiState, word: str) -> float:
-        previous_singleton, previous_article = previous
+        previous_singleton, previous_article, _ = previous
         current_singleton = len(word) == 1 and word.isalpha()
         cost = 0.0
 
-        # Consecutive implicit one-letter words are much more likely to be an
-        # identifier/OOV token than a genuine phrase (``openai`` vs
-        # ``open a i``). Explicit punctuation still forms hard run boundaries,
-        # so this only affects boundaries the segmenter itself is inventing.
         if previous_singleton and current_singleton:
             cost += self.adjacent_singleton_penalty
 
-        # A contextual article is evidence for a following noun. Restrict the
-        # bonus to longer OOV candidates: otherwise ``findacme`` can become
-        # ``find a cme`` merely because an unknown suffix happens to start with
-        # an article-looking character.
         if previous_article and len(word) >= _ARTICLE_UNKNOWN_MIN_LENGTH and self._is_unknown(word):
             cost -= self.article_unknown_bonus
 
         return cost
 
     @staticmethod
-    def _state_for(word: str, *, has_prefix: bool) -> _ViterbiState:
-        return (len(word) == 1 and word.isalpha(), has_prefix and word in _ARTICLES)
+    def _state_for(word: str, *, has_prefix: bool, neural_tag: int) -> _ViterbiState:
+        return (len(word) == 1 and word.isalpha(), has_prefix and word in _ARTICLES, neural_tag)
+
+    @staticmethod
+    def _neural_edge_options(
+        neural_scores: _NeuralScores | None,
+        start: int,
+        end: int,
+        previous_tag: int,
+    ) -> tuple[tuple[int, float], ...]:
+        if neural_scores is None:
+            return ((_NO_NEURAL_TAG, 0.0),)
+        return neural_scores.edge_options(start, end, previous_tag)
 
     def _relax_word(
         self,
@@ -270,6 +298,7 @@ class WordSegmenter(_CoreWordSegmenter):
         end: int,
         costs: _ViterbiCosts,
         back: _ViterbiBack,
+        neural_scores: _NeuralScores | None,
     ) -> None:
         previous_costs = costs[start]
         if not previous_costs:
@@ -280,17 +309,24 @@ class WordSegmenter(_CoreWordSegmenter):
         if not math.isfinite(lexical_cost):
             return
 
-        state = self._state_for(word, has_prefix=start > 0)
         base_cost = lexical_cost + self._boundary_cost(text, start)
         end_costs = costs[end]
         end_back = back[end]
 
         for previous_state, previous_cost in previous_costs.items():
-            candidate = previous_cost + base_cost + self._transition_cost(previous_state, word)
-            if candidate >= end_costs.get(state, math.inf):
-                continue
-            end_costs[state] = candidate
-            end_back[state] = (start, previous_state)
+            transition_cost = self._transition_cost(previous_state, word)
+            for neural_tag, neural_score in self._neural_edge_options(
+                neural_scores,
+                start,
+                end,
+                previous_state[2],
+            ):
+                state = self._state_for(word, has_prefix=start > 0, neural_tag=neural_tag)
+                candidate = previous_cost + base_cost + transition_cost - self.neural_weight * neural_score
+                if candidate >= end_costs.get(state, math.inf):
+                    continue
+                end_costs[state] = candidate
+                end_back[state] = (start, previous_state)
 
     @staticmethod
     def _backtrack(text: str, costs: _ViterbiCosts, back: _ViterbiBack) -> list[str]:
@@ -312,14 +348,18 @@ class WordSegmenter(_CoreWordSegmenter):
         result.reverse()
         return result
 
+    def _neural_scores(self, text: str) -> _NeuralScores | None:
+        if self._neural_scorer is None or not self._neural_scorer.supports(text):
+            return None
+        return self._neural_scorer.score_run(text)
+
     def _segment_run(self, text: str) -> list[str]:
         """Return the minimum-cost segmentation for one alphanumeric run."""
         if not text:
             return []
 
         n = len(text)
-        # State is deliberately tiny: local sequence evidence only needs to
-        # know whether the previous token was a singleton and/or a contextual article.
+        neural_scores = self._neural_scores(text)
         costs: _ViterbiCosts = [{} for _ in range(n + 1)]
         back: _ViterbiBack = [{} for _ in range(n + 1)]
         costs[0][_START_STATE] = 0.0
@@ -327,7 +367,7 @@ class WordSegmenter(_CoreWordSegmenter):
         for end in range(1, n + 1):
             start_min = max(0, end - self.max_word_length)
             for start in range(start_min, end):
-                self._relax_word(text, start, end, costs, back)
+                self._relax_word(text, start, end, costs, back, neural_scores)
 
         return self._backtrack(text, costs, back)
 
@@ -377,12 +417,14 @@ __all__ = [
     "DEFAULT_CASE_BOUNDARY_BONUS",
     "DEFAULT_CUSTOM_WORD_COST",
     "DEFAULT_IMPLICIT_BOUNDARY_PENALTY",
+    "DEFAULT_NEURAL_WEIGHT",
     "DEFAULT_NUMERIC_BOUNDARY_BONUS",
     "DEFAULT_NUMERIC_COST",
     "DEFAULT_UNKNOWN_CHAR_COST",
     "DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY",
     "DEFAULT_WEAK_SHORT_WORD_PENALTY",
     "SYSTEM_WORDLISTS",
+    "BoundaryModel",
     "SegmentSpan",
     "WordSegmenter",
     "normalize_word",

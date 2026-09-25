@@ -7,13 +7,17 @@ import csv
 import io
 import time
 import urllib.request
+from importlib import import_module
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, cast
 
-import dksplit
 import numpy as np
-from dksplit.split import Splitter
 
 from wordrobe._neural_boundary import CHAR_VOCAB, MAX_LEN, NeuralBoundaryModel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from types import ModuleType
 
 BENCHMARK_URL = "https://raw.githubusercontent.com/ABTdomain/dksplit/main/benchmark/sample_1000.csv"
 MAX_DIVERGENCES = 20
@@ -55,9 +59,36 @@ for _index, _char in enumerate(CHAR_VOCAB, start=2):
     _CHAR_MAP[ord(_char)] = _index
 
 
+class _ReferenceSession(Protocol):
+    def run(self, output_names: object, input_feed: dict[str, np.ndarray]) -> list[np.ndarray]: ...
+
+
+class _ReferenceSplitter(Protocol):
+    session: _ReferenceSession
+
+    def split(self, text: str) -> list[str]: ...
+
+    def split_topk(self, text: str, k: int) -> list[list[str]]: ...
+
+
+def _module_path(module: ModuleType, name: str) -> Path:
+    module_file = module.__file__
+    if module_file is None:
+        msg = f"installed {name} module has no filesystem path"
+        raise RuntimeError(msg)
+    return Path(module_file).resolve()
+
+
 def _installed_model_paths() -> tuple[Path, Path]:
-    model_dir = Path(dksplit.__file__).resolve().parent / "models"
+    dksplit = import_module("dksplit")
+    model_dir = _module_path(dksplit, "dksplit").parent / "models"
     return model_dir / "dksplit-int8.onnx", model_dir / "dksplit.npz"
+
+
+def _reference_splitter(onnx_path: Path, crf_path: Path) -> _ReferenceSplitter:
+    splitter_module = import_module("dksplit.split")
+    factory = cast("Callable[..., _ReferenceSplitter]", vars(splitter_module)["Splitter"])
+    return factory(model_path=str(onnx_path), crf_path=str(crf_path), num_threads=1)
 
 
 def _ids(text: str) -> np.ndarray:
@@ -65,7 +96,7 @@ def _ids(text: str) -> np.ndarray:
     return _CHAR_MAP[raw]
 
 
-def _reference_emissions(splitter: Splitter, text: str) -> np.ndarray:
+def _reference_emissions(splitter: _ReferenceSplitter, text: str) -> np.ndarray:
     result = splitter.session.run(None, {"chars": _ids(text).reshape(1, -1)})[0]
     return np.asarray(result[0], dtype=np.float32)
 
@@ -116,7 +147,7 @@ def _acceptable(row: dict[str, str]) -> set[str]:
     return {value.strip().lower() for value in (row["truth"], row.get("might_right", "")) if value.strip()}
 
 
-def _run_representative(reference: Splitter, model: NeuralBoundaryModel) -> None:
+def _run_representative(reference: _ReferenceSplitter, model: NeuralBoundaryModel) -> None:
     top1_matches = 0
     top3_order_matches = 0
     max_error = 0.0
@@ -142,7 +173,7 @@ def _run_representative(reference: Splitter, model: NeuralBoundaryModel) -> None
     print(f"representative_mean_abs_emission_error={total_error / emission_values:.9g}")
 
 
-def _run_benchmark(reference: Splitter, model: NeuralBoundaryModel, url: str) -> None:
+def _run_benchmark(reference: _ReferenceSplitter, model: NeuralBoundaryModel, url: str) -> None:
     rows = _load_benchmark(url)
     top1_parity = 0
     top3_order_parity = 0
@@ -206,7 +237,9 @@ def _run_benchmark(reference: Splitter, model: NeuralBoundaryModel, url: str) ->
         if reference_top1 != model_top1 and len(divergences) < MAX_DIVERGENCES:
             divergences.append((text, reference_top1, model_top1, acceptable))
 
-    count = sum(1 for row in rows if row["prefix"].isascii() and row["prefix"].isalnum() and len(row["prefix"]) <= MAX_LEN)
+    count = sum(
+        1 for row in rows if row["prefix"].isascii() and row["prefix"].isalnum() and len(row["prefix"]) <= MAX_LEN
+    )
     print(f"benchmark_samples={count}")
     print(f"benchmark_top1_parity={top1_parity / count:.6%}")
     print(f"benchmark_top3_order_parity={top3_order_parity / count:.6%}")
@@ -237,7 +270,7 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _parser().parse_args()
     onnx_path, crf_path = _installed_model_paths()
-    reference = Splitter(model_path=str(onnx_path), crf_path=str(crf_path), num_threads=1)
+    reference = _reference_splitter(onnx_path, crf_path)
     model = NeuralBoundaryModel(args.weights)
     print(f"onnx_bytes={onnx_path.stat().st_size}")
     print(f"converted_bytes={args.weights.stat().st_size}")

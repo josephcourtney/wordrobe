@@ -103,6 +103,28 @@ segmenter = WordSegmenter(unknown_cost=unknown_cost)
 
 The callback must return a finite numeric cost. The sequence-scoring penalties and bonus must be finite and non-negative.
 
+### Optional neural boundary evidence
+
+The default backend remains the dependency-light heuristic model. Installing the `neural` extra enables an optional DKSplit-derived character boundary model implemented by Wordrobe's stripped NumPy runtime:
+
+```bash
+pip install 'wordrobe[neural]'
+```
+
+From a repository checkout, use `uv sync --extra neural` instead. Then select the backend explicitly:
+
+```python
+from wordrobe.segment import BoundaryModel, WordSegmenter
+
+segmenter = WordSegmenter(boundary_model=BoundaryModel.DKSPLIT)
+segmenter.segment("isthisacamel")
+# ['is', 'this', 'a', 'camel']
+```
+
+The neural model does not replace the lexical segmenter or restrict it to the neural model's preferred splits. Its exact CRF sequence score is added as another term in the same Viterbi search, so custom and blocked words, OOV costs, capitalization and numeric hints, and the existing local sequence rules remain active. `neural_weight` controls its strength; the default is `0.5`, calibrated to preserve the established adversarial regression suite.
+
+The converted model supports ASCII alphanumeric runs up to 64 characters. Other runs fall back to the normal heuristic path instead of being truncated or mapped through an unknown-character token. Model provenance and attribution are recorded in `THIRD_PARTY_NOTICES.md` and the packaged `wordrobe/data/DKSPLIT_NOTICE.txt`.
+
 ### Custom vocabulary
 
 Known project- or domain-specific words can be supplied as a collection using `custom_word_cost`, or as a mapping with explicit costs. Lower costs make a candidate more favorable.
@@ -147,6 +169,9 @@ wordrobe decode isthisacamel
 
 wordrobe decode isthisasnorql
 # is this a snorql
+
+wordrobe decode --boundary-model dksplit isthisacamel
+# is this a camel
 
 wordrobe decode --case snake_case hello_world
 # hello world

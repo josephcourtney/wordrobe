@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CLI commands for case encoding, decoding, case conversion, and case recognition.
 - `wordrobe guess --all` for deterministic enumeration of compatible case conventions.
 - Documentation for custom segmentation vocabulary, blocked words, unknown-word scoring, frequency files, and lossless spans.
+- Optional `wordrobe[neural]` support with a DKSplit-derived NumPy boundary model that can contribute CRF boundary evidence to the existing lexical Viterbi search.
+- `--boundary-model` and `--neural-weight` options for automatic CLI word recovery.
 
 ### Changed
 
@@ -23,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Ranked fallback vocabulary duplicates now retain their earliest (best) rank.
 - Unknown candidates may use the configured `max_word_length` even when the loaded dictionary contains only shorter words.
 - CLI subcommand option parsing now delegates options to the selected subcommand instead of treating them as root options.
+- The optional DKSplit boundary backend uses a calibrated neural weight of `0.5`; unsupported Unicode or overlength runs fall back to the existing heuristic path without truncation.
 
 ## [0.1.0] - 2026-09-24
 

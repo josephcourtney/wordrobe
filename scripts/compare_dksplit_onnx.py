@@ -7,15 +7,17 @@ import csv
 import io
 import time
 import urllib.request
-from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
-from types import ModuleType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 
 from wordrobe._neural_boundary import CHAR_VOCAB, MAX_LEN, NeuralBoundaryModel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from types import ModuleType
 
 BENCHMARK_URL = "https://raw.githubusercontent.com/ABTdomain/dksplit/main/benchmark/sample_1000.csv"
 MAX_DIVERGENCES = 20
@@ -85,7 +87,7 @@ def _installed_model_paths() -> tuple[Path, Path]:
 
 def _reference_splitter(onnx_path: Path, crf_path: Path) -> _ReferenceSplitter:
     splitter_module = import_module("dksplit.split")
-    factory = cast("Callable[..., _ReferenceSplitter]", getattr(splitter_module, "Splitter"))
+    factory = cast("Callable[..., _ReferenceSplitter]", vars(splitter_module)["Splitter"])
     return factory(model_path=str(onnx_path), crf_path=str(crf_path), num_threads=1)
 
 

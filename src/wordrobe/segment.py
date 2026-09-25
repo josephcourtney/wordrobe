@@ -411,7 +411,6 @@ class WordSegmenter(_CoreWordSegmenter):
 
 
 __all__ = [
-    "BoundaryModel",
     "COMMON_WORDS",
     "DEFAULT_ADJACENT_SINGLETON_PENALTY",
     "DEFAULT_ARTICLE_UNKNOWN_BONUS",
@@ -425,6 +424,7 @@ __all__ = [
     "DEFAULT_UNKNOWN_SHORT_FRAGMENT_PENALTY",
     "DEFAULT_WEAK_SHORT_WORD_PENALTY",
     "SYSTEM_WORDLISTS",
+    "BoundaryModel",
     "SegmentSpan",
     "WordSegmenter",
     "normalize_word",

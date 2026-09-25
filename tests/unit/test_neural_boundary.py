@@ -102,7 +102,8 @@ def test_model_rejects_unknown_resource_format(tmp_path) -> None:
 
 def test_model_rejects_wrong_embedding_shape(tmp_path) -> None:
     arrays = _model_arrays()
-    arrays["embedding_q"] = arrays["embedding_q"][:-1]
+    embedding = np.asarray(arrays["embedding_q"])
+    arrays["embedding_q"] = embedding[:-1]
     path = tmp_path / "wrong-shape.npz"
     np.savez_compressed(path, **arrays)
 

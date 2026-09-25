@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING, IO
+from typing import IO, TYPE_CHECKING
 
 try:
     import numpy as np

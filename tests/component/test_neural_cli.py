@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
+
 from typer.testing import CliRunner
 
 import wordrobe.segment as segment_module
 from wordrobe.cli import app
+
+if TYPE_CHECKING:
+    import pytest
 
 runner = CliRunner()
 
@@ -59,7 +63,8 @@ def test_cli_reports_missing_neural_extra_cleanly(monkeypatch: pytest.MonkeyPatc
 
     def import_without_neural(name: str):
         if name == "wordrobe._neural_scoring":
-            raise ImportError("simulated missing NumPy")
+            msg = "simulated missing NumPy"
+            raise ImportError(msg)
         return real_import_module(name)
 
     monkeypatch.setattr(segment_module, "import_module", import_without_neural)

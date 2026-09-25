@@ -39,6 +39,18 @@ def test_zero_neural_weight_matches_heuristic(empty_wordlist, text: str) -> None
     assert neural.segment(text) == heuristic.segment(text)
 
 
+def test_neural_evidence_can_change_the_viterbi_winner(empty_wordlist) -> None:
+    heuristic = WordSegmenter(wordlist=empty_wordlist)
+    neural = WordSegmenter(
+        wordlist=empty_wordlist,
+        boundary_model=BoundaryModel.DKSPLIT,
+        neural_weight=3.0,
+    )
+
+    assert heuristic.segment("therapist") == ["the", "rapist"]
+    assert neural.segment("therapist") == ["therapist"]
+
+
 def test_default_neural_weight_preserves_article_oov_regression(empty_wordlist) -> None:
     segmenter = WordSegmenter(wordlist=empty_wordlist, boundary_model=BoundaryModel.DKSPLIT)
 

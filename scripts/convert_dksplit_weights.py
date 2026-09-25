@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Sequence
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
+from typing import Protocol, cast
 
-import dksplit
 import numpy as np
-import onnx
-from onnx import numpy_helper
 
 FORMAT_VERSION = 1
 EXPECTED_LSTM_NODES = 3
@@ -16,13 +17,38 @@ MIN_LSTM_INPUTS = 12
 DEFAULT_OUTPUT = Path("src/wordrobe/data/dksplit-boundaries-v1.npz")
 
 
+class _OnnxNode(Protocol):
+    op_type: str
+    input: Sequence[str]
+
+
+class _OnnxGraph(Protocol):
+    initializer: Sequence[object]
+    node: Sequence[_OnnxNode]
+
+
+class _OnnxModel(Protocol):
+    graph: _OnnxGraph
+
+
+def _module_path(module: ModuleType, name: str) -> Path:
+    module_file = module.__file__
+    if module_file is None:
+        msg = f"installed {name} module has no filesystem path"
+        raise RuntimeError(msg)
+    return Path(module_file).resolve()
+
+
 def _installed_model_paths() -> tuple[Path, Path]:
-    model_dir = Path(dksplit.__file__).resolve().parent / "models"
+    dksplit = import_module("dksplit")
+    model_dir = _module_path(dksplit, "dksplit").parent / "models"
     return model_dir / "dksplit-int8.onnx", model_dir / "dksplit.npz"
 
 
-def _initializers(model: onnx.ModelProto) -> dict[str, np.ndarray]:
-    return {item.name: numpy_helper.to_array(item) for item in model.graph.initializer}
+def _initializers(model: _OnnxModel) -> dict[str, np.ndarray]:
+    numpy_helper = import_module("onnx.numpy_helper")
+    to_array = cast("Callable[[object], np.ndarray]", getattr(numpy_helper, "to_array"))
+    return {item.name: to_array(item) for item in model.graph.initializer if hasattr(item, "name")}
 
 
 def _required(initializers: dict[str, np.ndarray], name: str) -> np.ndarray:
@@ -35,7 +61,9 @@ def _required(initializers: dict[str, np.ndarray], name: str) -> np.ndarray:
 
 def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
     """Extract only tensors required by Wordrobe's fixed NumPy runtime."""
-    model = onnx.load(onnx_path, load_external_data=False)
+    onnx = import_module("onnx")
+    load_model = cast("Callable[..., _OnnxModel]", getattr(onnx, "load"))
+    model = load_model(onnx_path, load_external_data=False)
     initializers = _initializers(model)
     lstm_nodes = [node for node in model.graph.node if node.op_type == "DynamicQuantizeLSTM"]
     if len(lstm_nodes) != EXPECTED_LSTM_NODES:
@@ -76,7 +104,8 @@ def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
         arrays["crf_end_transitions"] = np.asarray(crf["end_transitions"], dtype=np.float32)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(output_path, **arrays)
+    save_compressed = cast("Callable[..., None]", np.savez_compressed)
+    save_compressed(output_path, **arrays)
 
 
 def _parser() -> argparse.ArgumentParser:

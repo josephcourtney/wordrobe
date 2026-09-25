@@ -82,11 +82,7 @@ CASES = (
     Case("penisland", frozenset({("pen", "island")}), xfail=True),
 )
 
-DEFAULT_WEIGHTS = (0.0, 0.05, 0.1, 0.2, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0)
-
-
-def _normalized(tokens: list[str]) -> tuple[str, ...]:
-    return tuple(token.lower() for token in tokens)
+DEFAULT_WEIGHTS = (0.0, 0.25, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0)
 
 
 def evaluate(
@@ -96,7 +92,7 @@ def evaluate(
     stable_failures: list[tuple[Case, tuple[str, ...]]] = []
     xfail_failures: list[tuple[Case, tuple[str, ...]]] = []
     for case in CASES:
-        actual = _normalized(case.make_segmenter(wordlist, weight).segment(case.text))
+        actual = tuple(case.make_segmenter(wordlist, weight).segment(case.text))
         if actual in case.accepted:
             continue
         target = xfail_failures if case.xfail else stable_failures

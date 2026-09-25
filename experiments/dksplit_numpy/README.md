@@ -1,95 +1,94 @@
 # DKSplit NumPy experiment
 
-This directory is an exploratory, non-integrated reimplementation of the fixed
-DKSplit inference graph using NumPy. It is deliberately outside `src/wordrobe`
-and is not part of Wordrobe's public API or runtime dependencies.
+This directory contains only the exploratory runtime candidate for evaluating
+DKSplit's fixed BiLSTM-CRF model without ONNX Runtime. It remains deliberately
+outside `src/wordrobe` and is not part of Wordrobe's public API or dependency
+surface.
 
-The experiment answers a narrow question: can DKSplit's trained model be used
-without ONNX Runtime if its fixed architecture is implemented directly?
+## Runtime boundary
+
+`runtime.py` is the only inference implementation. It depends on NumPy plus a
+converted weights NPZ and provides:
+
+- DKSplit-compatible lowercase/truncate/character preprocessing;
+- the fixed three-layer bidirectional LSTM in float32;
+- the 768 -> 2 emission projection;
+- two-state CRF best-path decoding;
+- k-best CRF decoding with deduplicated segmentations;
+- `NumpyDKSplit.split()` and `NumpyDKSplit.split_topk()`.
+
+It intentionally contains no ONNX parsing, ONNX Runtime integration, benchmark
+downloads, model inspection, dynamic-quantization emulation, or test corpus
+generation.
+
+## Development scripts
+
+All implementation/conversion/reference machinery lives under the repository's
+`scripts/` directory:
+
+- `scripts/convert_dksplit_weights.py` converts DKSplit's published ONNX model
+  and CRF parameters into the compact NPZ consumed by `runtime.py`.
+- `scripts/compare_dksplit_onnx.py` runs the minimal runtime against the real
+  DKSplit ONNX Runtime implementation, including representative inputs and the
+  published 1,000-domain benchmark.
+
+Neither script is part of the inference dependency path.
 
 ## Recovered architecture
 
-Inspection of the shipped `dksplit-int8.onnx` graph shows:
+The published DKSplit 1.0.2 model uses:
 
-- character vocabulary: 38 IDs (`PAD`, `UNK`, 26 letters, 10 digits)
-- embedding: `38 x 384`, statically quantized `uint8`
-- three bidirectional recurrent layers
-- each direction has hidden size 384
-- layer 0 input width: 384
-- layers 1 and 2 input width: 768
-- recurrent operator: ONNX Runtime `com.microsoft::DynamicQuantizeLSTM`
-- gate order: IOFC
-- final projection: 768 -> 2 tags, dynamically quantized activation with an
-  `int8` static weight matrix
-- two-state linear-chain CRF decoded outside the ONNX graph
+- 38 character IDs (`PAD`, `UNK`, 26 letters, 10 digits);
+- a `38 x 384` embedding;
+- three bidirectional LSTM layers;
+- hidden size 384 per direction;
+- IOFC gate order;
+- a 768 -> 2 emission projection;
+- a two-state linear-chain CRF outside the ONNX graph.
 
-## Files
-
-- `inspect_onnx.py` summarizes the actual shipped graph and tensor layout.
-- `convert.py` is the one-time converter from DKSplit's ONNX model plus CRF NPZ
-  into a compact runtime NPZ.
-- `float_model.py` is the practical NumPy implementation. It dequantizes static
-  weights once and performs float32 BLAS-backed inference.
-- `model.py` contains a much slower attempt to emulate ONNX Runtime's dynamic
-  activation quantization and MLAS nonlinearities. It is retained as a
-  diagnostic reference, not the preferred backend.
-- `compare.py` compares emissions, top-1 segmentation, size, and runtime against
-  the installed DKSplit/ONNX Runtime implementation.
-- `realistic_compare.py` generates identifier-like inputs and compares top-1 and
-  top-3 behavior.
-- `benchmark_compare.py` evaluates both backends on DKSplit's published
-  `sample_1000.csv` benchmark.
+The source model uses dynamically quantized ONNX Runtime operators. The runtime
+candidate instead dequantizes the static weights once and evaluates the fixed
+architecture in float32. A previous NumPy implementation that tried to emulate
+dynamic activation quantization was substantially slower and did not improve
+behavioral parity enough to justify keeping it, so it has been removed.
 
 ## Conversion
 
-The converted archive intentionally contains only tensors needed by the fixed
-architecture: quantized embedding/LSTM/projection weights, their scales and
-zero points, biases, and CRF parameters. The graph, operator metadata, and ONNX
-container are discarded.
-
-Example:
+With DKSplit and ONNX installed for development:
 
 ```bash
-python experiments/dksplit_numpy/convert.py \
-  --onnx /path/to/dksplit-int8.onnx \
-  --crf /path/to/dksplit.npz \
-  --output /tmp/dksplit-numpy.npz
+python scripts/convert_dksplit_weights.py --output /tmp/dksplit-numpy.npz
 ```
 
-On the current DKSplit 1.0.2 model, the ONNX file is 9,538,484 bytes and the
-compressed converted archive is about 7.05 MB. No converted model weights are
-committed to Wordrobe.
+Explicit source paths can also be supplied with `--onnx` and `--crf`.
 
-## Numerical strategy
-
-The practical backend does **not** attempt bit-for-bit reproduction of ONNX
-Runtime's dynamic activation quantization. Instead it dequantizes DKSplit's
-static weights once to float32 and evaluates the same fixed BiLSTM and CRF.
-This makes the implementation simple and inspectable while retaining the
-trained model.
-
-A second backend in `model.py` emulates dynamic quantization more literally.
-It is substantially slower in NumPy and still does not reproduce every
-kernel-level numerical detail of ONNX Runtime, so it is useful primarily for
-understanding the residual differences.
+The converted archive contains only the quantized embedding/LSTM/projection
+weights, their scale/zero-point data, biases, format version, and CRF
+parameters. The ONNX graph and operator metadata are discarded. For DKSplit
+1.0.2, the source ONNX file is 9,538,484 bytes and the compressed converted
+archive is about 7.05 MB. No model weights are committed to Wordrobe.
 
 ## Validation
 
-The branch-only GitHub Actions workflow installs the real DKSplit package and
-uses ONNX Runtime as an oracle. It checks:
+The branch-only workflow performs the conversion and then runs:
 
-1. character preprocessing parity;
-2. emission differences;
-3. top-1 CRF segmentation parity on representative and randomized strings;
-4. top-1/top-3 parity on identifier-like synthetic data;
-5. behavior on DKSplit's published 1,000-prefix benchmark;
-6. rough single-string runtime and serialized model size.
+```bash
+python scripts/compare_dksplit_onnx.py --weights /tmp/dksplit-numpy.npz
+```
 
-The workflow is exploratory and the draft PR is intentionally not intended for
-merge.
+On DKSplit's published 1,000-domain benchmark, the stripped float32 runtime has
+shown:
+
+- 99.7% top-1 parity with ONNX;
+- strict exact match 86.4% vs ONNX 86.5%;
+- lenient exact match 91.4% vs ONNX 91.5%;
+- identical acceptable-result recall at top 3 (98.5%) and top 5 (99.3%).
+
+The main tradeoff is speed: straightforward NumPy single-string inference is
+roughly 8-9x slower than ONNX Runtime on the GitHub Linux runner.
 
 ## Licensing
 
 The converted tensors are derived from the DKSplit model and remain subject to
-DKSplit/model licensing and attribution requirements. The experiment does not
-vendor or redistribute those weights in this repository.
+its model licensing and attribution requirements. This experiment does not
+vendor or redistribute those weights.

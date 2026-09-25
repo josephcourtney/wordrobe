@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import resources
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 try:
     import numpy as np
@@ -14,6 +14,7 @@ except ImportError as exc:  # pragma: no cover - exercised through optional depe
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import IO
 
 CHAR_VOCAB = "abcdefghijklmnopqrstuvwxyz0123456789"
 UNK_IDX = 1

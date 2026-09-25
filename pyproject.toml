@@ -56,5 +56,14 @@
       "S310",    # Benchmark URL is a fixed HTTPS project resource.
     ]
 
+[[tool.ty.overrides]]
+  include = [
+    "scripts/compare_dksplit_onnx.py",
+    "scripts/convert_dksplit_weights.py",
+  ]
+
+  [tool.ty.overrides.rules]
+    all = "ignore"
+
 [tool.uv.sources]
   showcov = { git = "https://github.com/josephcourtney/showcov.git", rev = "db8a535b5cb5e36a3557f6559fa15f3cd7f20c0a" }

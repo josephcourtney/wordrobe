@@ -3,7 +3,6 @@
   version = "0.1.0"
   description = "A costume change for words."
   readme = "README.md"
-  license-files = ["THIRD_PARTY_NOTICES.md"]
   authors = [
     { name = "Joseph Courtney", email = "5942706+josephcourtney@users.noreply.github.com" },
   ]
@@ -11,11 +10,6 @@
   dependencies = [
     "typer>=0.27.2",
   ]
-
-  [project.optional-dependencies]
-    neural = [
-      "numpy>=2.0",
-    ]
 
   [project.scripts]
     wordrobe = "wordrobe.cli:app"
@@ -28,7 +22,6 @@
   dev = [
     "coverage>=7.13.4",
     "import-linter>=2.10",
-    "numpy>=2.0",
     "pip-audit>=2.10.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",

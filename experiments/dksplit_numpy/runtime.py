@@ -1,3 +1,4 @@
+# ruff: noqa: INP001
 """Minimal NumPy inference for DKSplit's fixed BiLSTM-CRF architecture.
 
 This module is intentionally limited to code that could plausibly become a
@@ -7,9 +8,12 @@ ONNX inspection, conversion, and parity testing live under ``scripts/``.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 CHAR_VOCAB = "abcdefghijklmnopqrstuvwxyz0123456789"
 UNK_IDX = 1
@@ -19,6 +23,9 @@ NUM_LAYERS = 3
 NUM_DIRECTIONS = 2
 NUM_TAGS = 2
 FORMAT_VERSION = 1
+VOCAB_SIZE = 38
+_EMISSION_NDIM = 2
+_UNIQUE_PATH_MULTIPLIER = 2
 
 # ONNX Runtime MLAS logistic coefficients.
 _LOGISTIC_ALPHA_9 = np.float32(4.37031012579801e-11)
@@ -71,7 +78,8 @@ def _dequantize(q: np.ndarray, scale: np.ndarray, zero_point: np.ndarray) -> np.
 def _combined_bias(bias: np.ndarray) -> np.ndarray:
     expected = (NUM_DIRECTIONS, 8 * HIDDEN_SIZE)
     if bias.shape != expected:
-        raise ValueError(f"unexpected LSTM bias shape: {bias.shape}; expected {expected}")
+        message = f"unexpected LSTM bias shape: {bias.shape}; expected {expected}"
+        raise ValueError(message)
     return bias[:, : 4 * HIDDEN_SIZE] + bias[:, 4 * HIDDEN_SIZE :]
 
 
@@ -82,7 +90,7 @@ def _logistic(value: np.ndarray) -> np.ndarray:
     p = p * x2 + _LOGISTIC_ALPHA_5
     p = p * x2 + _LOGISTIC_ALPHA_3
     p = p * x2 + _LOGISTIC_ALPHA_1
-    p = p * x
+    p *= x
     q = x2 * _LOGISTIC_BETA_10 + _LOGISTIC_BETA_8
     q = q * x2 + _LOGISTIC_BETA_6
     q = q * x2 + _LOGISTIC_BETA_4
@@ -100,7 +108,7 @@ def _tanh(value: np.ndarray) -> np.ndarray:
     p = p * x2 + _TANH_ALPHA_5
     p = p * x2 + _TANH_ALPHA_3
     p = p * x2 + _TANH_ALPHA_1
-    p = p * x
+    p *= x
     q = x2 * _TANH_BETA_6 + _TANH_BETA_4
     q = q * x2 + _TANH_BETA_2
     q = q * x2 + _TANH_BETA_0
@@ -165,8 +173,9 @@ def _crf_decode(
     start_transitions: np.ndarray,
     end_transitions: np.ndarray,
 ) -> np.ndarray:
-    if emissions.ndim != 2 or emissions.shape[1] != NUM_TAGS:
-        raise ValueError(f"unexpected emissions shape: {emissions.shape}")
+    if emissions.ndim != _EMISSION_NDIM or emissions.shape[1] != NUM_TAGS:
+        message = f"unexpected emissions shape: {emissions.shape}"
+        raise ValueError(message)
     seq_len = emissions.shape[0]
     if seq_len == 0:
         return np.empty(0, dtype=np.int32)
@@ -246,15 +255,28 @@ class NumpyDKSplit:
         with np.load(model_path) as data:
             version = int(data["format_version"])
             if version != FORMAT_VERSION:
-                raise ValueError(f"unsupported converted model format: {version}")
+                message = f"unsupported converted model format: {version}"
+                raise ValueError(message)
 
-            self.embedding = _dequantize(data["embedding_q"], data["embedding_scale"], data["embedding_zp"])
+            self.embedding = _dequantize(
+                data["embedding_q"],
+                data["embedding_scale"],
+                data["embedding_zp"],
+            )
             self.layers: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
             for layer in range(NUM_LAYERS):
                 self.layers.append(
                     (
-                        _dequantize(data[f"l{layer}_w_q"], data[f"l{layer}_w_scale"], data[f"l{layer}_w_zp"]),
-                        _dequantize(data[f"l{layer}_r_q"], data[f"l{layer}_r_scale"], data[f"l{layer}_r_zp"]),
+                        _dequantize(
+                            data[f"l{layer}_w_q"],
+                            data[f"l{layer}_w_scale"],
+                            data[f"l{layer}_w_zp"],
+                        ),
+                        _dequantize(
+                            data[f"l{layer}_r_q"],
+                            data[f"l{layer}_r_scale"],
+                            data[f"l{layer}_r_zp"],
+                        ),
                         _combined_bias(np.asarray(data[f"l{layer}_bias"], dtype=np.float32)),
                     )
                 )
@@ -269,10 +291,12 @@ class NumpyDKSplit:
             self.start_transitions = np.asarray(data["crf_start_transitions"], dtype=np.float32)
             self.end_transitions = np.asarray(data["crf_end_transitions"], dtype=np.float32)
 
-        if self.embedding.shape != (38, HIDDEN_SIZE):
-            raise ValueError(f"unexpected embedding shape: {self.embedding.shape}")
+        if self.embedding.shape != (VOCAB_SIZE, HIDDEN_SIZE):
+            message = f"unexpected embedding shape: {self.embedding.shape}"
+            raise ValueError(message)
         if self.projection_weights.shape != (NUM_DIRECTIONS * HIDDEN_SIZE, NUM_TAGS):
-            raise ValueError(f"unexpected projection shape: {self.projection_weights.shape}")
+            message = f"unexpected projection shape: {self.projection_weights.shape}"
+            raise ValueError(message)
 
     def emissions(self, text: str) -> np.ndarray:
         """Return two CRF emission scores for each processed character."""
@@ -298,7 +322,8 @@ class NumpyDKSplit:
     def split_topk(self, text: str, k: int = 3) -> list[list[str]]:
         """Return up to ``k`` distinct segmentations, best first."""
         if k < 1:
-            raise ValueError("k must be >= 1")
+            message = "k must be >= 1"
+            raise ValueError(message)
         if not text:
             return []
 
@@ -308,7 +333,7 @@ class NumpyDKSplit:
             self.transitions,
             self.start_transitions,
             self.end_transitions,
-            2 * k,
+            _UNIQUE_PATH_MULTIPLIER * k,
         )
         results: list[list[str]] = []
         seen: set[tuple[str, ...]] = set()

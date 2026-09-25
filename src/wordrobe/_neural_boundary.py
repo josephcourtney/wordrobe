@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from importlib import resources
-from os import PathLike
-from typing import BinaryIO
+from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO
 
 try:
     import numpy as np
 except ImportError as exc:  # pragma: no cover - exercised through optional dependency behavior
     msg = "neural boundary inference requires the 'neural' extra: pip install 'wordrobe[neural]'"
     raise ImportError(msg) from exc
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 CHAR_VOCAB = "abcdefghijklmnopqrstuvwxyz0123456789"
 UNK_IDX = 1
@@ -235,13 +237,13 @@ def _crf_decode_topk(
 class NeuralBoundaryModel:
     """NumPy-only inference for Wordrobe's converted DKSplit model resource."""
 
-    def __init__(self, model_path: str | PathLike[str] | None = None) -> None:
+    def __init__(self, model_path: str | Path | None = None) -> None:
         if model_path is None:
             resource = resources.files("wordrobe").joinpath(MODEL_RESOURCE)
             with resource.open("rb") as stream:
                 self._load(stream)
         else:
-            with open(model_path, "rb") as stream:
+            with Path(model_path).open("rb") as stream:
                 self._load(stream)
 
     def _load(self, stream: BinaryIO) -> None:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import numpy as np
 import pytest
+
+np = pytest.importorskip("numpy")
 
 from wordrobe._neural_boundary import (
     MAX_LEN,
@@ -28,7 +29,7 @@ def model() -> NeuralBoundaryModel:
         ("a" * (MAX_LEN + 1), False),
     ],
 )
-def test_supports_neural_text(text: str, supported: bool) -> None:
+def test_supports_neural_text(text: str, *, supported: bool) -> None:
     assert supports_neural_text(text) is supported
 
 

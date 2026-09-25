@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from wordrobe.segment import BoundaryModel, WordSegmenter
+from wordrobe.segment import DEFAULT_NEURAL_WEIGHT, BoundaryModel, WordSegmenter
 
 
 @pytest.fixture
@@ -10,6 +10,10 @@ def empty_wordlist(tmp_path):
     path = tmp_path / "empty.txt"
     path.write_text("", encoding="utf-8")
     return path
+
+
+def test_default_neural_weight_is_calibrated() -> None:
+    assert DEFAULT_NEURAL_WEIGHT == 0.5
 
 
 @pytest.mark.parametrize(
@@ -31,6 +35,12 @@ def test_zero_neural_weight_matches_heuristic(empty_wordlist, text: str) -> None
     )
 
     assert neural.segment(text) == heuristic.segment(text)
+
+
+def test_default_neural_weight_preserves_article_oov_regression(empty_wordlist) -> None:
+    segmenter = WordSegmenter(wordlist=empty_wordlist, boundary_model=BoundaryModel.DKSPLIT)
+
+    assert segmenter.segment("isthisasnorql") == ["is", "this", "a", "snorql"]
 
 
 @pytest.mark.parametrize(

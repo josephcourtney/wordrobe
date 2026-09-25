@@ -124,7 +124,7 @@ def test_model_rejects_corrupt_npz(tmp_path) -> None:
     path = tmp_path / "corrupt.npz"
     path.write_bytes(b"not a numpy archive")
 
-    with pytest.raises(ValueError, match="pickled .* data"):
+    with pytest.raises(ValueError, match=r"pickled .* data"):
         NeuralBoundaryModel(path)
 
 

@@ -53,6 +53,27 @@ jobs:
         run: |
           uv lock
           python scripts/convert_dksplit_weights.py
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              Path('src/wordrobe/segment.py'): [
+                  ('DEFAULT_NEURAL_WEIGHT = 1.0', 'DEFAULT_NEURAL_WEIGHT = 0.5'),
+              ],
+              Path('src/wordrobe/_neural_boundary.py'): [
+                  ('from typing import TYPE_CHECKING, BinaryIO', 'from typing import TYPE_CHECKING, IO'),
+                  ('def _load(self, stream: BinaryIO) -> None:', 'def _load(self, stream: IO[bytes]) -> None:'),
+              ],
+          }
+          for path, pairs in replacements.items():
+              text = path.read_text(encoding='utf-8')
+              for old, new in pairs:
+                  if old in text:
+                      text = text.replace(old, new, 1)
+                  else:
+                      assert new in text, f'{path}: missing both {old!r} and {new!r}'
+              path.write_text(text, encoding='utf-8')
+          PY
           ruff format \
             src/wordrobe/_neural_boundary.py \
             src/wordrobe/_neural_scoring.py \
@@ -62,7 +83,8 @@ jobs:
             scripts/compare_dksplit_onnx.py \
             scripts/evaluate_hybrid_segmentation.py \
             tests/unit/test_neural_boundary.py \
-            tests/unit/test_neural_scoring.py
+            tests/unit/test_neural_scoring.py \
+            tests/component/test_neural_segment.py
 
       - name: Commit generated resources when changed
         if: github.event_name == 'pull_request'
@@ -74,7 +96,7 @@ jobs:
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m 'Refresh neural model resources'
+          git commit -m 'Finalize neural segmentation calibration'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
       - name: Check neural sources
@@ -96,10 +118,11 @@ jobs:
             scripts/compare_dksplit_onnx.py \
             scripts/evaluate_hybrid_segmentation.py \
             tests/unit/test_neural_boundary.py \
-            tests/unit/test_neural_scoring.py
+            tests/unit/test_neural_scoring.py \
+            tests/component/test_neural_segment.py
 
       - name: Test neural runtime
-        run: pytest -q tests/unit/test_neural_boundary.py tests/unit/test_neural_scoring.py
+        run: pytest -q tests/unit/test_neural_boundary.py tests/unit/test_neural_scoring.py tests/component/test_neural_segment.py
 
       - name: Sweep hybrid neural weights
         run: python scripts/evaluate_hybrid_segmentation.py

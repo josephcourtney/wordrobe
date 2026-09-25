@@ -1,0 +1,13 @@
+DKSplit model attribution
+=========================
+
+Wordrobe's optional neural boundary model is derived from DKSplit by ABTdomain.
+Source: https://github.com/ABTdomain/dksplit
+Source model version: DKSplit 1.0.2
+Copyright 2026 ABTdomain
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License: https://creativecommons.org/licenses/by/4.0/legalcode
+
+Wordrobe converts the published ONNX model and CRF parameters into a compact
+NPZ and reimplements the fixed inference architecture in NumPy. These are
+adaptations and are not endorsed by ABTdomain.

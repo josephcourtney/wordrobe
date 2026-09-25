@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Sequence
 from importlib import import_module
 from pathlib import Path
-from types import ModuleType
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from types import ModuleType
 
 FORMAT_VERSION = 1
 EXPECTED_LSTM_NODES = 3
@@ -47,7 +49,7 @@ def _installed_model_paths() -> tuple[Path, Path]:
 
 def _initializers(model: _OnnxModel) -> dict[str, np.ndarray]:
     numpy_helper = import_module("onnx.numpy_helper")
-    to_array = cast("Callable[[object], np.ndarray]", getattr(numpy_helper, "to_array"))
+    to_array = cast("Callable[[object], np.ndarray]", vars(numpy_helper)["to_array"])
     return {item.name: to_array(item) for item in model.graph.initializer if hasattr(item, "name")}
 
 
@@ -62,7 +64,7 @@ def _required(initializers: dict[str, np.ndarray], name: str) -> np.ndarray:
 def convert(onnx_path: Path, crf_path: Path, output_path: Path) -> None:
     """Extract only tensors required by Wordrobe's fixed NumPy runtime."""
     onnx = import_module("onnx")
-    load_model = cast("Callable[..., _OnnxModel]", getattr(onnx, "load"))
+    load_model = cast("Callable[..., _OnnxModel]", vars(onnx)["load"])
     model = load_model(onnx_path, load_external_data=False)
     initializers = _initializers(model)
     lstm_nodes = [node for node in model.graph.node if node.op_type == "DynamicQuantizeLSTM"]

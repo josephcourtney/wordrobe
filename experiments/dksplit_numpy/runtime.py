@@ -1,4 +1,3 @@
-# ruff: file-ignore [INP001]
 """Minimal NumPy inference for DKSplit's fixed BiLSTM-CRF architecture.
 
 This module is intentionally limited to code that could plausibly become a

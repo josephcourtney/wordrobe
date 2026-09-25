@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from wordrobe.segment import DEFAULT_NEURAL_WEIGHT, BoundaryModel, WordSegmenter
@@ -13,7 +15,7 @@ def empty_wordlist(tmp_path):
 
 
 def test_default_neural_weight_is_calibrated() -> None:
-    assert DEFAULT_NEURAL_WEIGHT == pytest.approx(0.5)
+    assert math.isclose(DEFAULT_NEURAL_WEIGHT, 0.5)
 
 
 @pytest.mark.parametrize(
